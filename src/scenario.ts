@@ -68,6 +68,8 @@ export type ScenarioResult = {
   checks: Record<string, boolean>;
   fallbacks: string[];
   approvals: number;
+  /** Times the one conflict was asked again because main moved under an open approval. */
+  reasked?: number;
   merges: number;
   steps: { step: string; ms: number }[];
   town?: string;
@@ -82,6 +84,7 @@ export async function runScenario(env: Env, opts: { repo: string; mode?: "unatte
   const steps: ScenarioResult["steps"] = [];
   const mark = (step: string) => steps.push({ step, ms: Date.now() - t0 });
   const fallbacks: string[] = [];
+  let reasked = 0;
   const checks: Record<string, boolean> = {};
   const lane = (agent: string) => env.LANE.get(env.LANE.idFromName(`${repo}:${agent}`));
   const ma = env.MERGE_AGENT.get(env.MERGE_AGENT.idFromName(repo));
@@ -133,7 +136,8 @@ export async function runScenario(env: Env, opts: { repo: string; mode?: "unatte
     ]);
     // The editor writes again before its first write merges: from its own pending version.
     const town1 = await read("editor", TOWN);
-    checks.stackedReadsOwnPending = town1.pending;
+    // The editor's second write starts from its own first write: still pending, or already merged into main.
+    checks.stackedReadsOwnWrite = town1.pending || (town1.content ?? "").includes(editorText);
     await write("editor", { reason: "Date the bridge", changes: [{ path: TOWN, base: town1.base, content: town1.content!.replace("Founded in 1851", "Founded in 1851 (the stone bridge followed in 1860)") }] });
     checks.allWritesLanded = results.every((r) => r.status === "fulfilled");
     mark("act 1 written");
@@ -141,14 +145,24 @@ export async function runScenario(env: Env, opts: { repo: string; mode?: "unatte
     mark("act 1 merged");
 
     // ---- act 2: the one real overlap waits for a person
+    // One real conflict, but possibly more than one question: if main moves after an approval opens (the
+    // editor's stacked write merging), the answer is refused against the stale main and the question is
+    // asked again. A person sees the new question; the unattended runner answers it too.
     const open = await ma.approvals("open");
-    checks.exactlyOneApproval = open.length === 1 && open[0].path === TOWN;
+    checks.exactlyOneConflict = open.length === 1 && open[0].path === TOWN;
     checks.approvalHasProposal = !!open[0]?.proposal;
-    if (open[0]) {
-      if (mode === "unattended") await ma.resolve(repo, open[0].id, open[0].proposal ? "approve" : "theirs", "scenario@braid.invalid");
-      else await until(async () => (await ma.approval(open[0].id))?.status !== "open", opts.personWaitMs ?? 600_000);
+    const conflicted = open[0]?.laneCommit;
+    let asked = 0;
+    for (let round = 0; conflicted && round < 4; round++) {
+      const q = (await ma.approvals("open")).find((a) => a.laneCommit === conflicted);
+      if (!q) break;
+      asked++;
+      if (mode === "unattended") await ma.resolve(repo, q.id, q.proposal ? "approve" : "theirs", "scenario@braid.invalid");
+      else await until(async () => (await ma.approval(q.id))?.status !== "open", opts.personWaitMs ?? 600_000);
+      await drained();
     }
-    await drained();
+    reasked = Math.max(0, asked - 1);
+    checks.onlyThatConflictAsked = (await ma.approvals("all")).every((a) => a.laneCommit === conflicted);
     const afterApproval = await mainLog();
     // The editor's stacked write (the bridge date, in History) merged without asking anyone.
     checks.stackedMergedClean = (await mainText(env, repo, TOWN)).includes("1860");
@@ -205,7 +219,7 @@ export async function runScenario(env: Env, opts: { repo: string; mode?: "unatte
     checks.mergesAccountForWrites = merges.length === 9 && new Set(merges.map((c) => c.trailers.laneCommit)).size === 9;
     const allApprovals = await ma.approvals("all");
     const pass = Object.values(checks).every(Boolean);
-    return { pass, repo, mode, ms: Date.now() - t0, checks, fallbacks, approvals: allApprovals.length, merges: merges.length, steps, town };
+    return { pass, repo, mode, ms: Date.now() - t0, checks, fallbacks, approvals: allApprovals.length, reasked, merges: merges.length, steps, town };
   } catch (e) {
     console.error(JSON.stringify({ event: "scenario_failed", repo, error: String(e), stack: (e as Error).stack }));
     return { pass: false, repo, mode, ms: Date.now() - t0, checks, fallbacks, approvals: -1, merges: -1, steps, error: String(e) };
