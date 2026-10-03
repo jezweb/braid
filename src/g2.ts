@@ -25,12 +25,17 @@ Harbourne is a made-up river town with one bridge and a flour mill.
 Town hall: 555 0100
 `;
 
-export async function runG2(env: Env, keep = false, c: { proposal?: boolean } = {}) {
-  const repo = `g2-${crypto.randomUUID().slice(0, 8)}`;
+export async function runG2(env: Env, keep = false, c: { proposal?: boolean; repo?: string; resolve?: boolean; person?: string } = {}) {
+  const repo = c.repo ?? `g2-${crypto.randomUUID().slice(0, 8)}`;
   const t0 = Date.now();
   const steps: { step: string; ms: number }[] = [];
   const mark = (step: string) => steps.push({ step, ms: Date.now() - t0 });
-  const created = await env.ARTIFACTS.create(repo, { setDefaultBranch: "main" });
+  // A repo deleted a moment ago (the demo rebuild) may not free its name at once: retry briefly.
+  let created: ArtifactsCreateRepoResult | undefined;
+  for (let i = 0; !created; i++) {
+    try { created = await env.ARTIFACTS.create(repo, { setDefaultBranch: "main" }); }
+    catch (e) { if (i >= 5 || !c.repo) throw e; await new Promise((ok) => setTimeout(ok, 1000 * (i + 1))); }
+  }
   const lane = (agent: string) => env.LANE.get(env.LANE.idFromName(`${repo}:${agent}`));
   const ma = env.MERGE_AGENT.get(env.MERGE_AGENT.idFromName(repo));
   const drained = async (limitMs = 180_000) => {
@@ -91,6 +96,11 @@ export async function runG2(env: Env, keep = false, c: { proposal?: boolean } = 
     const open = await ma.approvals("open");
     const readWhileHeld = await lane("translator").read(repo, "translator", TOWN);
     const a = open[0];
+    if (c.resolve === false) {
+      // Demo seed: leave the approval open for a person, and give the person a lane now (a fork takes seconds).
+      if (c.person) await ma.provisionLane(repo, c.person);
+      return { repo, ms: Date.now() - t0, openApprovals: open.length, steps, errors };
+    }
     const action = c.proposal === false || !a?.proposal ? "theirs" : "approve";
     if (a) await ma.resolve(repo, a.id, action, "g2-runner@braid.invalid");
     const final = await drained();

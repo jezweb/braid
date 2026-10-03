@@ -215,6 +215,17 @@ export class Lane extends DurableObject<Env> {
     });
   }
 
+  /** Forget everything (the demo rebuilds its repo under the same name). */
+  reset(): Promise<void> {
+    return this.serial(async () => {
+      await this.ctx.storage.deleteAlarm();
+      await this.ctx.storage.deleteAll();
+      this.info = undefined;
+      this.store = undefined;
+      this.tip = undefined;
+    });
+  }
+
   /** The merge agent folded these lane commits into main: their pending entries are no longer needed. */
   merged(laneCommits: string[]): Promise<void> {
     return this.serial(async () => {

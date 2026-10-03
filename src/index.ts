@@ -8,6 +8,7 @@ import type { Lane } from "./do/lane";
 import type { MergeAgent } from "./do/merge-agent";
 import { runG1 } from "./g1";
 import { runG2 } from "./g2";
+import { api } from "./api";
 import { DEFAULT_PROPOSAL_MODEL, proposeSection } from "./propose";
 
 export { Lane } from "./do/lane";
@@ -21,11 +22,17 @@ type Env = {
   MERGE_AGENT: DurableObjectNamespace<MergeAgent>;
   AI: Ai;
   PROPOSAL_MODEL?: string;
+  REPO?: string;
+  PERSON_AGENT?: string;
+  DEMO_ACTOR?: string;
+  ACT_KEY?: string;
+  ACCESS_TEAM?: string;
+  ACCESS_AUD?: string;
 };
 
 const app = new Hono<{ Bindings: Env }>();
 
-app.get("/", (c) => c.text("braid"));
+app.route("/api", api);
 
 // G0 spike: local dev only (SPIKE=1 in .dev.vars). Removed once G0 passes on Artifacts.
 app.post("/spike/merge", async (c) => {
@@ -68,6 +75,42 @@ app.post("/spike/g2", async (c) => {
   const key = c.env.SPIKE_KEY;
   if (!key || c.req.header("authorization") !== `Bearer ${key}`) return c.notFound();
   return c.json(await runG2(c.env, c.req.query("keep") === "1", { proposal: c.req.query("proposal") !== "0" }));
+});
+
+// An agent edits one record of the demo repo: read through its lane, replace text, write.
+app.post("/spike/agent-edit", async (c) => {
+  const key = c.env.SPIKE_KEY;
+  if (!key || c.req.header("authorization") !== `Bearer ${key}`) return c.notFound();
+  const { agent, path, find, replace, reason } = await c.req.json<{ agent: string; path: string; find: string; replace: string; reason?: string }>();
+  const repo = c.env.REPO ?? "memory";
+  const lane = c.env.LANE.get(c.env.LANE.idFromName(`${repo}:${agent}`));
+  const r = await lane.read(repo, agent, path);
+  if (r.content === null || !r.content.includes(find)) return c.json({ error: "text not found", content: r.content }, 409);
+  return c.json(await lane.write(repo, { agent, reason: reason ?? `${agent} edits ${path}`, changes: [{ path, base: r.base, content: r.content.replace(find, replace) }] }));
+});
+
+// Rebuild the demo repo (REPO) from scratch and leave it mid-story: lanes merged, one approval open.
+app.post("/spike/demo-seed", async (c) => {
+  const key = c.env.SPIKE_KEY;
+  if (!key || c.req.header("authorization") !== `Bearer ${key}`) return c.notFound();
+  const repo = c.env.REPO ?? "memory";
+  const ma = c.env.MERGE_AGENT.get(c.env.MERGE_AGENT.idFromName(repo));
+  // A rebuild is only safe while nothing is in flight: no dirty lane, no pending merge.
+  const busy = await ma.status();
+  if (busy.alarm !== null || busy.lanes.some((l) => l.dirty > 0)) return c.json({ error: "merges in flight; try again when the queue is idle", busy }, 409);
+  const known = await ma.reset(repo);
+  const agents = new Set([...known, "scout", "fact-checker", "editor", "translator", "archivist", c.env.PERSON_AGENT ?? "person"]);
+  for (const a of agents) {
+    await c.env.LANE.get(c.env.LANE.idFromName(`${repo}:${a}`)).reset();
+    await c.env.ARTIFACTS.delete(`${repo}--${a}`).catch(() => false);
+  }
+  await c.env.ARTIFACTS.delete(repo).catch(() => false);
+  try {
+    return c.json(await runG2(c.env, true, { repo, resolve: false, person: c.env.PERSON_AGENT ?? "person" }));
+  } catch (e) {
+    console.error(JSON.stringify({ event: "demo_seed_failed", error: String(e), stack: (e as Error).stack }));
+    return c.json({ error: String(e) }, 500);
+  }
 });
 
 app.post("/spike/propose", async (c) => {

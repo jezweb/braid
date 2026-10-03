@@ -364,6 +364,19 @@ export class MergeAgent extends DurableObject<Env> {
     return (await this.approval(id))!;
   }
 
+  /** Forget everything (the demo rebuilds its repo under the same name). Returns the agents it knew. */
+  reset(repo: string): Promise<string[]> {
+    return this.serial(async () => {
+      if (!this.ctx.id.equals(this.env.MERGE_AGENT.idFromName(repo))) throw new Error(`this merge agent is not ${repo}'s`);
+      const agents = this.ctx.storage.sql.exec<{ agent: string }>(`SELECT agent FROM lanes`).toArray().map((r) => r.agent);
+      await this.ctx.storage.deleteAlarm();
+      this.ctx.storage.sql.exec(`DELETE FROM lanes`);
+      this.ctx.storage.sql.exec(`DELETE FROM approvals`);
+      await this.ctx.storage.delete([...(await this.ctx.storage.list()).keys()]);
+      return agents;
+    });
+  }
+
   async status(): Promise<{ lanes: LaneStatus[]; open: number; alarm: number | null }> {
     const lanes = this.ctx.storage.sql.exec<LaneStatus>(`SELECT agent, since, dirty, merged, held, error FROM lanes ORDER BY agent`).toArray();
     const open = this.ctx.storage.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM approvals WHERE status = 'open'`).one().n;

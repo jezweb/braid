@@ -7,18 +7,27 @@
   "scripts": {
     "dev": "wrangler dev",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit",
-    "git-server": "node test/git-server.mjs"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p viewer",
+    "git-server": "node test/git-server.mjs",
+    "build": "vite build --config viewer/vite.config.ts",
+    "deploy": "npm run build && wrangler deploy"
   },
   "dependencies": {
+    "diff": "^9.0.0",
     "hono": "^4.13.12",
     "isomorphic-git": "^1.42.6",
-    "node-diff3": "^3.2.1"
+    "node-diff3": "^3.2.1",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261003.1",
     "@types/node": "^26.6.4",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.1",
     "typescript": "^7.0.2",
+    "vite": "^8.3.2",
     "vitest": "^5.0.3",
     "wrangler": "^4.147.0"
   }
