@@ -68,29 +68,27 @@ You need Node (tested on 26) and a Cloudflare account on the Workers Paid plan w
 
 **1. Make it yours.** In `wrangler.jsonc`, change `name` (the Worker), the Artifacts `namespace` (created the first time a repo is made in it) and `REPO` (the repo the viewer shows). Deploying with someone else's name would replace their Worker if you share an account.
 
-**2. Install and deploy.**
+**2. Install and deploy.** With an API token instead of `wrangler login`, give it Workers Scripts Edit, Artifacts Edit and Workers KV Storage Read, and set `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`.
 
 ```sh
 npm install                 # npm 11 may warn that postinstall scripts are not approved; the build does not need them
-npx wrangler login          # or set CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID (see below)
+npx wrangler login          # skip with an API token
 npm run deploy              # prints your URL: https://<name>.<your-subdomain>.workers.dev
 ```
 
-**3. Set the two keys.** `SPIKE_KEY` runs the scenario; `ACT_KEY` lets whoever holds it approve and undo until Cloudflare Access is in front. Keep them in your shell:
+**3. Set the two keys.** `SPIKE_KEY` runs the scenario; `ACT_KEY` lets whoever holds it approve and undo until Cloudflare Access is in front. Keep them in your shell (lost the shell? run these again; a new value replaces the old):
 
 ```sh
 SPIKE_KEY=$(openssl rand -hex 24); printf %s "$SPIKE_KEY" | npx wrangler secret put SPIKE_KEY
 ACT_KEY=$(openssl rand -hex 24);   printf %s "$ACT_KEY"   | npx wrangler secret put ACT_KEY
-URL=https://<name>.<your-subdomain>.workers.dev
+URL=https://<name>.<your-subdomain>.workers.dev    # the URL deploy printed
 ```
 
-**4. Play the story** (five agents, one approval, an undo and its undo, a plain-git agent). Unattended, on a throwaway repo, the runner plays the person too. It takes about two minutes and prints one JSON object at the end; success is `"pass": true` with every entry in `checks` true.
+**4. Play the story** (five agents, one approval, an undo and its undo, a plain-git agent). Unattended, on a throwaway `scene-*` repo, the runner plays the person too. Open `$URL/?repo=scene-1` in a browser first to watch it fill; the command waits about two minutes, then prints one JSON object. Success is `"pass": true` with every entry in `checks` true.
 
 ```sh
 curl -X POST -H "Authorization: Bearer $SPIKE_KEY" "$URL/spike/scenario?repo=scene-1"
 ```
-
-Watch it at `$URL/?repo=scene-1` (the viewer shows `REPO` unless the link names another).
 
 To play the person yourself, run it on `REPO` in interactive mode. It deletes and rebuilds that repo, so it asks you to name it twice:
 
@@ -102,14 +100,13 @@ curl -X POST -H "Authorization: Bearer $SPIKE_KEY" "$URL/spike/scenario?repo=har
 
 While it runs, open `$URL/` and approve, undo and undo the undo when it waits on you. To act from a phone, open `$URL/#key=<ACT_KEY>` once on that phone.
 
-**API token, if you use one instead of `wrangler login`:** Workers Scripts Edit, Artifacts Edit, and Workers KV Storage Read (only `wrangler delete` needs it; without it the delete succeeds and then prints an authentication error).
-
-**Clean up.** Each run leaves its repo plus one fork per agent (eight in all):
+**Clean up.** Each run leaves its repo plus one fork per agent (eight in all). With `NS` your namespace and `R` the repo:
 
 ```sh
-npx wrangler artifacts repos list --namespace <namespace>
-npx wrangler artifacts repos delete <repo> --namespace <namespace> --force   # for each
-npx wrangler delete <name>
+for r in "$R" "$R"--{scout,fact-checker,editor,translator,archivist,person,claude-code}; do
+  npx wrangler artifacts repos delete "$r" --namespace "$NS" --force
+done
+npx wrangler delete <name>      # without KV read on the token, this deletes and then prints an auth error and your account list
 ```
 
 `npm test` runs the merge table and the merge path against real git repos on a local `git http-backend`, no mocks.
