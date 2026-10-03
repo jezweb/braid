@@ -29,7 +29,7 @@ export type ApiEnv = {
 };
 
 /** The verified email from a Cloudflare Access JWT, or undefined. Only trusted when ACCESS_TEAM and ACCESS_AUD are set. */
-async function accessEmail(env: ApiEnv, jwt: string | undefined): Promise<string | undefined> {
+export async function accessEmail(env: ApiEnv, jwt: string | undefined): Promise<string | undefined> {
   if (!env.ACCESS_TEAM || !env.ACCESS_AUD || !jwt) return undefined;
   const [h, p, sig] = jwt.split(".");
   if (!h || !p || !sig) return undefined;

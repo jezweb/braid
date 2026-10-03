@@ -11,6 +11,12 @@ captureDemoKey();
 function App() {
   const loc = useLocation();
   const url = new URL(loc, location.origin);
+  // Reaching this path means Access has signed the person in: go back to where they asked to act.
+  if (url.pathname === "/approve/signin") {
+    const back = url.searchParams.get("back");
+    location.replace(back && back.startsWith("/") && !back.startsWith("//") ? back : "/");
+    return null;
+  }
   const approve = /^\/approve\/(\d+)$/.exec(url.pathname);
   if (approve) return <Approve id={Number(approve[1])} />;
   if (url.pathname === "/record" && url.searchParams.get("path")) {

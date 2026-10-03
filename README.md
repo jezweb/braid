@@ -98,7 +98,14 @@ curl -X POST -H "Authorization: Bearer $SPIKE_KEY" "$URL/spike/scenario?repo=har
 
 ![The viewer: main runs down the page, each agent's lane braids back into it](docs/viewer.png)
 
-While it runs, open `$URL/` and approve, undo and undo the undo when it waits on you. To act from a phone, open `$URL/#key=<ACT_KEY>` once on that phone.
+While it runs, open `$URL/` and approve, undo and undo the undo when it waits on you.
+
+**Who may act.** Reads are public. Approve and Undo need either a [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/) sign-in or, until you set that up, `ACT_KEY`: open `$URL/#key=<ACT_KEY>` once on the phone that will act. For Access, create a self-hosted application on `<name>.<subdomain>.workers.dev/api/act/*` and `/approve/*` with a policy for the people allowed to decide, then give the Worker the team domain and the application's AUD tag so it verifies every sign-in itself:
+
+```sh
+printf %s "https://<team>.cloudflareaccess.com" | npx wrangler secret put ACCESS_TEAM
+printf %s "<application AUD tag>"               | npx wrangler secret put ACCESS_AUD
+```
 
 **Clean up.** Each run leaves its repo plus one fork per agent (eight in all). With `NS` your namespace and `R` the repo:
 

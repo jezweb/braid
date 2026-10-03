@@ -91,7 +91,9 @@ async function act<T>(path: string, body: unknown): Promise<T> {
   if (k) headers["x-demo-key"] = k;
   // Name the repo being acted on; the server refuses any but the one it acts for.
   const repo = new URLSearchParams(location.search).get("repo") ?? (await get<State>("/state")).actOn;
-  const r = await fetch(`/api/act${path}?repo=${encodeURIComponent(repo)}`, { method: "POST", headers, body: JSON.stringify(body) });
+  // Behind Cloudflare Access, a request with no sign-in is redirected to the login page: treat that as "sign in".
+  const r = await fetch(`/api/act${path}?repo=${encodeURIComponent(repo)}`, { method: "POST", headers, body: JSON.stringify(body), redirect: "manual" });
+  if (r.type === "opaqueredirect" || r.status === 401 || r.status === 403) throw new Error("sign in to act");
   const data = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error((data as { error?: string }).error ?? `${r.status}`);
   return data as T;
@@ -106,3 +108,8 @@ export const api = {
   resolve: (id: number, action: "approve" | "ours" | "theirs" | "edit", text?: string) => act<Approval>(`/approvals/${id}`, { action, text }),
   undo: (commit: string, path?: string) => act<{ laneCommit: string }>(`/undo`, { commit, path }),
 };
+
+/** A path under /approve/ makes Cloudflare Access ask for a sign-in; it then sends the person back here. */
+export function signInHref(): string {
+  return `/approve/signin?back=${encodeURIComponent(location.pathname + location.search)}`;
+}

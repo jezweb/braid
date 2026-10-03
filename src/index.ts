@@ -127,6 +127,23 @@ app.post("/spike/scenario", async (c) => {
   return c.json(await runScenario(c.env, { repo, mode }));
 });
 
+// Open one fresh conflict on REPO without rebuilding it: two agents read the town, then both rewrite its
+// first summary sentence. One merges; the other waits for a person (for walking Approve on a phone).
+app.post("/spike/conflict", async (c) => {
+  const key = c.env.SPIKE_KEY;
+  if (!key || c.req.header("authorization") !== `Bearer ${key}`) return c.notFound();
+  const repo = c.env.REPO ?? "memory";
+  const path = "towns/harbourne.md";
+  const lane = (a: string) => c.env.LANE.get(c.env.LANE.idFromName(`${repo}:${a}`));
+  const [e, t] = await Promise.all([lane("editor").read(repo, "editor", path), lane("translator").read(repo, "translator", path)]);
+  if (!e.content || !t.content) return c.json({ error: "no town record" }, 409);
+  const first = /## Summary\n\n([^.\n]+)/.exec(e.content)?.[1];
+  if (!first) return c.json({ error: "no summary sentence" }, 409);
+  await lane("editor").write(repo, { agent: "editor", reason: "Summary: lead with the river", changes: [{ path, base: e.base, content: e.content.replace(first, "On the river, " + first.charAt(0).toLowerCase() + first.slice(1)) }] });
+  await lane("translator").write(repo, { agent: "translator", reason: "Summary: simpler opening", changes: [{ path, base: t.base, content: t.content.replace(first, first + " and it is easy to visit") }] });
+  return c.json({ ok: true, sentence: first });
+});
+
 // Rebuild the demo repo (REPO) from scratch and leave it mid-story: lanes merged, one approval open.
 app.post("/spike/demo-seed", async (c) => {
   const key = c.env.SPIKE_KEY;

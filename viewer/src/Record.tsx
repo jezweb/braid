@@ -1,7 +1,7 @@
 // Record: what it says now, then every change that made it so, newest first, each with Undo.
 
 import { useCallback, useEffect, useState } from "react";
-import { api, type Approval, type HistoryEntry } from "./api";
+import { api, signInHref, type Approval, type HistoryEntry } from "./api";
 import { ago, Changed, colourOf, Doc, navigate, titleOf, watchingOther } from "./util";
 
 type Entry = HistoryEntry & { before: string | null; after: string | null };
@@ -46,7 +46,7 @@ export function Record({ path, after }: { path: string; after?: number }) {
         if ((await load()) !== before) break;
       }
     } catch (e) {
-      setError((e as Error).message === "sign in to act" ? "Sign in to undo." : (e as Error).message);
+      setError((e as Error).message === "sign in to act" ? "SIGNIN" : (e as Error).message);
     } finally {
       setBusy(null);
     }
@@ -59,7 +59,7 @@ export function Record({ path, after }: { path: string; after?: number }) {
       {now === null && entries ? <p className="note">Deleted from main.</p> : <article className="doc"><Doc text={now ?? ""} /></article>}
       {decision && decision.status === "resolved" && <p className="landing" role="status">Your decision is merging</p>}
       {decision && decision.status === "superseded" && <p className="landing" role="status">Main changed first; this needs a fresh look</p>}
-      {error && <p className="note error" role="alert">{error}</p>}
+      {error === "SIGNIN" ? <p className="note" role="alert"><a href={signInHref()}>Sign in</a> to undo.</p> : error && <p className="note error" role="alert">{error}</p>}
       <ol className="timeline" aria-label="Changes, newest first">
         {(entries ?? []).map((e) => (
           <li key={e.commit} className={decision?.status === "merged" && e.laneCommit === decision.laneCommit ? "landed" : undefined}>

@@ -1,7 +1,7 @@
 // Approve: one question, the proposal shown as a change to main, one primary action.
 
 import { useEffect, useState } from "react";
-import { api, type Approval, type Conflict } from "./api";
+import { api, signInHref, type Approval, type Conflict } from "./api";
 import { Diff, Marked, navigate, watchingOther } from "./util";
 
 export function Approve({ id }: { id: number }) {
@@ -19,7 +19,7 @@ export function Approve({ id }: { id: number }) {
       const done = await api.resolve(id, action, text);
       navigate(`/record?path=${encodeURIComponent(done.path)}&after=${id}`);
     } catch (e) {
-      setError((e as Error).message === "sign in to act" ? "Sign in to decide." : (e as Error).message);
+      setError((e as Error).message === "sign in to act" ? "SIGNIN" : (e as Error).message);
       setBusy(false);
     }
   };
@@ -96,7 +96,7 @@ export function Approve({ id }: { id: number }) {
           ))}
         </>
       )}
-      {error && <p className="note error" role="alert">{error}</p>}
+      {error === "SIGNIN" ? <p className="note" role="alert"><a href={signInHref()}>Sign in</a> to decide.</p> : error && <p className="note error" role="alert">{error}</p>}
 
       {watchingOther() ? <p className="note">Watching only: decisions apply to the main demo repo.</p> : <div className="bar"><div className="inner">
         {editing !== null ? (
