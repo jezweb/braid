@@ -219,3 +219,23 @@ describe("side choices survive the whole-body fallback (codex G2 repro)", async 
     expect(r).toContain("another");
   });
 });
+
+describe("proposal guard", async () => {
+  const { proposeSection } = await import("../src/propose");
+  const c = { kind: "overlap" as const, section: "## S", base: "## S\n\nold\n\n", ours: "## S\n\nA\n\n", theirs: "## S\n\nB\n\n" };
+  const ai = (replies: string[]) => ({ run: async () => ({ response: replies.shift() ?? "" }) }) as unknown as Ai;
+  it("refuses a reply with commentary paragraphs, retries once, then gives up", async () => {
+    expect(await proposeSection(ai(["## S\n\nAB\n\n(I chose A.)", "## S\n\nAB"]), "m", c)).toBe("## S\n\nAB\n\n");
+    expect(await proposeSection(ai(["## S\n\nAB\n\n(note)", "## S\n\nAB\n\n(note)"]), "m", c)).toBeUndefined();
+  });
+});
+
+describe("proposal guard: nothing outside the section", async () => {
+  const { proposeSection } = await import("../src/propose");
+  const c = { kind: "overlap" as const, section: "## S", base: "## S\n\nold\n\n", ours: "## S\n\nA\n\n", theirs: "## S\n\nB\n\n" };
+  const ai = (replies: string[]) => ({ run: async () => ({ response: replies.shift() ?? "" }) }) as unknown as Ai;
+  it("refuses a proposal that carries another heading or a fence", async () => {
+    expect(await proposeSection(ai(["## S\n\nMerged.\n## Injected\nx", "## S\n\nMerged.\n## Injected\nx"]), "m", c)).toBeUndefined();
+    expect(await proposeSection(ai(["## S\n\nMerged.\n---\nx: 1", "## S\n\nMerged.\n---\nx: 1"]), "m", c)).toBeUndefined();
+  });
+});

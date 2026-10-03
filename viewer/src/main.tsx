@@ -13,7 +13,10 @@ function App() {
   const url = new URL(loc, location.origin);
   const approve = /^\/approve\/(\d+)$/.exec(url.pathname);
   if (approve) return <Approve id={Number(approve[1])} />;
-  if (url.pathname === "/record" && url.searchParams.get("path")) return <Record path={url.searchParams.get("path")!} />;
+  if (url.pathname === "/record" && url.searchParams.get("path")) {
+    const after = url.searchParams.get("after");
+    return <Record path={url.searchParams.get("path")!} after={after ? Number(after) : undefined} />;
+  }
   return <Live />;
 }
 

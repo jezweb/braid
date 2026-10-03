@@ -1,16 +1,17 @@
 // Record: what it says now, then every change that made it so, newest first, each with Undo.
 
 import { useCallback, useEffect, useState } from "react";
-import { api, type HistoryEntry } from "./api";
+import { api, type Approval, type HistoryEntry } from "./api";
 import { ago, Changed, colourOf, Doc, navigate, titleOf } from "./util";
 
 type Entry = HistoryEntry & { before: string | null; after: string | null };
 
-export function Record({ path }: { path: string }) {
+export function Record({ path, after }: { path: string; after?: number }) {
   const [now, setNow] = useState<string | null>(null);
   const [entries, setEntries] = useState<Entry[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [decision, setDecision] = useState<Approval | null>(null);
 
   const load = useCallback(async () => {
     const [rec, hist] = await Promise.all([api.record(path), api.history(path)]);
@@ -20,8 +21,9 @@ export function Record({ path }: { path: string }) {
     }));
     setNow(rec.after);
     setEntries(withDiffs);
+    if (after !== undefined) setDecision(await api.approval(after).catch(() => null));
     return hist[0]?.commit;
-  }, [path]);
+  }, [path, after]);
 
   useEffect(() => {
     let alive = true;
@@ -53,10 +55,12 @@ export function Record({ path }: { path: string }) {
       <a className="back" href="/" onClick={(e) => { e.preventDefault(); navigate("/"); }}>← Live</a>
       <header className="top"><h1>{titleOf(now, path)}</h1><span className="line">{path}</span></header>
       {now === null && entries ? <p className="note">Deleted from main.</p> : <article className="doc"><Doc text={now ?? ""} /></article>}
+      {decision && decision.status === "resolved" && <p className="landing" role="status">Your decision is merging</p>}
+      {decision && decision.status === "superseded" && <p className="landing" role="status">Main changed first; this needs a fresh look</p>}
       {error && <p className="note error" role="alert">{error}</p>}
       <ol className="timeline" aria-label="Changes, newest first">
         {(entries ?? []).map((e) => (
-          <li key={e.commit}>
+          <li key={e.commit} className={decision?.status === "merged" && e.laneCommit === decision.laneCommit ? "landed" : undefined}>
             <span className="pip" style={{ background: e.agent ? colourOf(e.agent) : "var(--ink-3)" }} />
             <div>
               <div className="row">

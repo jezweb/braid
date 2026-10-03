@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { api, type Approval, type Conflict } from "./api";
-import { Diff, navigate } from "./util";
+import { Diff, Marked, navigate } from "./util";
 
 export function Approve({ id }: { id: number }) {
   const [a, setA] = useState<Approval | null>(null);
@@ -58,11 +58,16 @@ export function Approve({ id }: { id: number }) {
             return (
               <section key={i} className="clash">
                 {overlaps.length > 1 && <h2>{o.section.replace(/^## /, "")}</h2>}
-                {proposed !== null && <div className="proposal"><b>Proposal</b><Diff from={body(o.ours)} to={body(proposed)} /></div>}
-                <div className="sides">
-                  <div className="side"><b>Main now</b><Diff from={body(o.base)} to={body(o.ours)} /></div>
-                  <div className="side"><b>{a.agent} wrote</b><Diff from={body(o.base)} to={body(o.theirs)} /></div>
-                </div>
+                {proposed !== null ? (
+                  <div className="proposal" aria-label="The text you approve"><Marked from={body(o.base)} to={body(proposed)} /></div>
+                ) : null}
+                <details className="compare" open={proposed === null}>
+                  <summary>Compare versions</summary>
+                  <div className="sides">
+                    <div className="side"><b>Main now</b><Diff from={body(o.base)} to={body(o.ours)} /></div>
+                    <div className="side"><b>{a.agent} wrote</b><Diff from={body(o.base)} to={body(o.theirs)} /></div>
+                  </div>
+                </details>
               </section>
             );
           })}

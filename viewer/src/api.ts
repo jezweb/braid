@@ -52,6 +52,7 @@ export type HistoryEntry = {
   resolution?: string;
   approvedBy?: string;
   reverts?: string;
+  laneCommit?: string;
   at: number;
 };
 

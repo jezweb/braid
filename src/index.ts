@@ -9,6 +9,7 @@ import type { MergeAgent } from "./do/merge-agent";
 import { runG1 } from "./g1";
 import { runG2 } from "./g2";
 import { api } from "./api";
+import { runScenario } from "./scenario";
 import { DEFAULT_PROPOSAL_MODEL, proposeSection } from "./propose";
 
 export { Lane } from "./do/lane";
@@ -111,6 +112,21 @@ app.post("/spike/read-token", async (c) => {
   return c.json({ remote: info.remote, token: t.plaintext });
 });
 
+// The whole demo story on a fresh repo. ?mode=interactive waits for a person on the viewer; ?repo= picks the name
+// (default: REPO, the repo the viewer shows).
+app.post("/spike/scenario", async (c) => {
+  const key = c.env.SPIKE_KEY;
+  if (!key || c.req.header("authorization") !== `Bearer ${key}`) return c.notFound();
+  // The scenario deletes and rebuilds its repo: only a scene-* repo, or the viewer's repo when asked in so many words.
+  const repo = c.req.query("repo") ?? c.env.REPO ?? "memory";
+  if (!/^[a-z0-9][a-z0-9-]{0,40}$/.test(repo)) return c.json({ error: "bad repo name" }, 400);
+  if (!repo.startsWith("scene-") && c.req.query("rebuild") !== repo) {
+    return c.json({ error: `this deletes and rebuilds ${repo}; pass ?rebuild=${repo} to confirm, or use a scene-* repo` }, 409);
+  }
+  const mode = c.req.query("mode") === "interactive" ? "interactive" : "unattended";
+  return c.json(await runScenario(c.env, { repo, mode }));
+});
+
 // Rebuild the demo repo (REPO) from scratch and leave it mid-story: lanes merged, one approval open.
 app.post("/spike/demo-seed", async (c) => {
   const key = c.env.SPIKE_KEY;
@@ -140,7 +156,10 @@ app.post("/spike/propose", async (c) => {
   if (!key || c.req.header("authorization") !== `Bearer ${key}`) return c.notFound();
   const model = c.req.query("model") || c.env.PROPOSAL_MODEL || DEFAULT_PROPOSAL_MODEL;
   const t0 = Date.now();
-  const sec = { kind: "overlap" as const, section: "## Summary",
+  const sec = c.req.query("case") === "summary" ? { kind: "overlap" as const, section: "## Summary",
+    base: "## Summary\n\nHarbourne is a made-up river town of about 4,000 people, with one stone bridge, a flour mill and a Saturday market.\n\n",
+    ours: "## Summary\n\nHarbourne is a made-up river town of 4,000 with a stone bridge, a flour mill and a Saturday market.\n\n",
+    theirs: "## Summary\n\nAbout 4,000 people live in Harbourne, a made-up town on a river. It has one stone bridge, a mill that makes flour, and a market every Saturday.\n\n" } : { kind: "overlap" as const, section: "## Summary",
     base: "## Summary\n\nHarbourne is a made-up river town with one bridge and a flour mill.\n\n",
     ours: "## Summary\n\nHarbourne is a made-up river town with one stone bridge and a working flour mill.\n\n",
     theirs: "## Summary\n\nHarbourne is a made-up river town with two bridges and an old flour mill.\n\n" };

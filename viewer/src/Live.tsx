@@ -25,7 +25,7 @@ export function Live() {
     <div className="page">
       <header className="top">
         <h1>{state.repo}</h1>
-        <span className="line">{agents.size} agents · {merges.length} merges</span>
+        <span className="line">{agents.size} agents · {merges.length} changes</span>
       </header>
       {waiting && (
         <div className="waiting" role="status">
@@ -82,8 +82,8 @@ function Braid({ state }: { state: State }) {
             <title>{`${m.agent}: ${m.subject}${m.approvedBy ? ` (approved by ${m.approvedBy})` : ""}`}</title>
             <path className="flow" d={m.curve} fill="none" stroke={m.colour} strokeWidth={3} strokeLinecap="round"
               style={{ ["--len" as string]: 600, ["--delay" as string]: `${300 + i * 35}ms` }} />
-            <circle className="dot appear" cx={g.mainX} cy={m.y} r={m.marked ? 7 : 5} fill={m.marked ? "var(--paper)" : m.colour}
-              stroke={m.marked ? "var(--bar)" : "var(--paper)"} strokeWidth={m.marked ? 3 : 2} style={{ ["--delay" as string]: `${300 + i * 35}ms` }} />
+            <circle className="dot appear" cx={g.mainX} cy={m.y} r={5} fill={m.marked ? "var(--bar)" : m.colour}
+              stroke="var(--paper)" strokeWidth={2} style={{ ["--delay" as string]: `${300 + i * 35}ms` }} />
             <rect x={Math.min(m.x, g.mainX) - 6} y={m.y - 22} width={Math.abs(m.x - g.mainX) + 12} height={28} fill="transparent" />
           </g>
         ))}

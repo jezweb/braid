@@ -10,13 +10,20 @@ export const DEFAULT_PROPOSAL_MODEL = "@cf/moonshotai/kimi-k2.6";
 
 type Overlap = Extract<Conflict, { kind: "overlap" }>;
 
-const SYSTEM = `You merge two edits of one section of a markdown record.
+const SYSTEM = `You merge two edits of one section of a markdown record into the version a careful editor would publish.
 You get the section as it was (BASE), as one writer changed it (A), and as another writer changed it (B).
-Write the section once, keeping what each writer meant to change. Where they truly disagree, prefer the wording that keeps more information and stays consistent with the rest of the section.
+Keep every change each writer made on purpose: a fact one added, a wording one simplified, a correction. Say each fact once. Keep it about as long as the longer of A and B.
 Reply with the merged section only: the same heading line if the inputs have one, then the text. No commentary, no code fences.`;
 
-/** One merged section, or undefined when the model gives nothing usable. */
+/** One merged section, or undefined when the model gives nothing usable (one retry). */
 export async function proposeSection(ai: Ai, model: string, c: Overlap): Promise<string | undefined> {
+  return (await proposeOnce(ai, model, c)) ?? (await proposeOnce(ai, model, c));
+}
+
+/** Paragraphs in a section, heading line excluded. */
+const paragraphs = (t: string) => t.replace(/^## [^\n]*\n/, "").trim().split(/\n{2,}/).filter(Boolean).length;
+
+async function proposeOnce(ai: Ai, model: string, c: Overlap): Promise<string | undefined> {
   const user = `BASE:\n${c.base}\n\nA:\n${c.ours}\n\nB:\n${c.theirs}`;
   const res = (await ai.run(model as keyof AiModels, {
     messages: [
@@ -35,6 +42,11 @@ export async function proposeSection(ai: Ai, model: string, c: Overlap): Promise
   // Keep the section's shape: its heading line, and the trailing blank line that separates sections.
   const heading = c.ours.split("\n")[0];
   if (heading.startsWith("## ") && !text.startsWith(heading)) return undefined;
+  // Nothing but this section: no other heading, no frontmatter fence. Anything else would land unseen.
+  const rest = heading.startsWith("## ") ? text.slice(heading.length) : text;
+  if (/^#{1,6} |^---\s*$/m.test(rest)) return undefined;
+  // More paragraphs than either writer produced is the model talking, not merging.
+  if (paragraphs(text) > Math.max(paragraphs(c.ours), paragraphs(c.theirs))) return undefined;
   const tail = /\n*$/.exec(c.ours)?.[0] ?? "\n";
   return text + (tail || "\n");
 }

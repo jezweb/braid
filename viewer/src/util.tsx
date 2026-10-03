@@ -88,3 +88,8 @@ export function Doc({ text }: { text: string }) {
     </>
   );
 }
+
+/** The new text, clean, with only what changed since `from` highlighted (no struck-out words). */
+export function Marked({ from, to }: { from: string; to: string }) {
+  return <>{diffWords(from, to).filter((p) => !p.removed).map((p, i) => (p.added ? <mark key={i}>{p.value}</mark> : <span key={i}>{p.value}</span>))}</>;
+}
