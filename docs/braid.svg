@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 430" width="760" height="430" role="img" aria-label="Agents write to their own forks; a merge agent braids them into main; a conflict waits for a person">
+  <defs>
+    <pattern id="gravel" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="8" height="8" fill="#f3e3cc"/>
+      <line x1="0" y1="0" x2="0" y2="8" stroke="#c9822b" stroke-width="3"/>
+    </pattern>
+    <style>
+      text { font-family: "Familjen Grotesk", "Helvetica Neue", Arial, sans-serif; fill: #13293d; }
+      .lane { font-size: 13px; font-weight: 700; }
+      .note { font-size: 13px; fill: #48606f; }
+      .mono { font-family: "IBM Plex Mono", Menlo, monospace; font-size: 11px; fill: #48606f; }
+    </style>
+  </defs>
+  <rect width="760" height="430" rx="10" fill="#eef3f2"/>
+
+  <!-- main -->
+  <line x1="380" y1="48" x2="380" y2="392" stroke="#1f4e79" stroke-width="12" stroke-linecap="round"/>
+  <text x="380" y="36" text-anchor="middle" class="lane" style="fill:#1f4e79">main</text>
+  <text x="380" y="416" text-anchor="middle" class="note">only the merge agent writes here</text>
+
+  <!-- scout: left, two commits, both merge clean -->
+  <path d="M380 70 C380 96, 250 82, 250 110 L250 250" fill="none" stroke="#4f6b5e" stroke-width="5" stroke-linecap="round" opacity="0.55"/>
+  <text x="250" y="62" text-anchor="middle" class="lane" style="fill:#4f6b5e" >scout</text>
+  <path d="M250 150 C250 170, 380 160, 380 178" fill="none" stroke="#4f6b5e" stroke-width="3.5"/>
+  <path d="M250 232 C250 252, 380 242, 380 260" fill="none" stroke="#4f6b5e" stroke-width="3.5"/>
+  <circle cx="380" cy="178" r="6" fill="#4f6b5e" stroke="#eef3f2" stroke-width="2"/>
+  <circle cx="380" cy="260" r="6" fill="#4f6b5e" stroke="#eef3f2" stroke-width="2"/>
+
+  <!-- editor: right, merges clean -->
+  <path d="M380 70 C380 96, 510 82, 510 110 L510 200" fill="none" stroke="#9a4f63" stroke-width="5" stroke-linecap="round" opacity="0.55"/>
+  <text x="510" y="62" text-anchor="middle" class="lane" style="fill:#9a4f63" >editor</text>
+  <path d="M510 182 C510 202, 380 192, 380 210" fill="none" stroke="#9a4f63" stroke-width="3.5"/>
+  <circle cx="380" cy="210" r="6" fill="#9a4f63" stroke="#eef3f2" stroke-width="2"/>
+
+  <!-- translator: far right, edited the same lines; held at a gravel bar until a person decides -->
+  <path d="M380 70 C380 100, 640 80, 640 112 L640 300" fill="none" stroke="#8a5a9e" stroke-width="5" stroke-linecap="round" opacity="0.55"/>
+  <text x="640" y="62" text-anchor="middle" class="lane" style="fill:#8a5a9e" >translator</text>
+  <rect x="612" y="298" width="56" height="24" rx="12" fill="url(#gravel)" stroke="#c9822b" stroke-width="1.5"/>
+  <text x="640" y="344" text-anchor="middle" class="note">same lines as editor:</text>
+  <text x="640" y="362" text-anchor="middle" class="note">waits on a person</text>
+    <!-- after the person approves -->
+  <path d="M612 310 C560 310, 400 330, 380 340" fill="none" stroke="#8a5a9e" stroke-width="3.5" stroke-dasharray="6 5"/>
+  <circle cx="380" cy="340" r="6" fill="#c9822b" stroke="#eef3f2" stroke-width="2"/>
+  <text x="398" y="366" class="mono">Resolution: llm</text>
+  <text x="398" y="380" class="mono">Approved-By: a person</text>
+
+  <!-- left notes -->
+  <text x="40" y="168" class="note">each agent writes</text>
+  <text x="40" y="186" class="note">only to its own fork</text>
+  <text x="40" y="250" class="note">every merge is a commit</text>
+  <text x="40" y="268" class="note">carrying who, why and what</text>
+</svg>

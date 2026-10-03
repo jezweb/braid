@@ -5,7 +5,7 @@ import { diffLines, diffWords } from "diff";
 const CHANNELS = ["#2e7d8c", "#5b7f3a", "#8a5a9e", "#b5651d", "#3d6fb0", "#9a4f63", "#4f6b5e", "#7a6a2b"];
 // The demo's agents get fixed, well-separated channels; anyone else hashes into the palette.
 const FIXED: Record<string, string> = {
-  scout: "#4f6b5e", "fact-checker": "#3d6fb0", editor: "#9a4f63", translator: "#8a5a9e", archivist: "#7a6a2b", person: "#c2410c",
+  scout: "#4f6b5e", "fact-checker": "#3d6fb0", editor: "#9a4f63", translator: "#8a5a9e", archivist: "#7a6a2b", person: "#c2410c", "claude-code": "#2e7d8c",
 };
 export function colourOf(agent: string): string {
   if (FIXED[agent]) return FIXED[agent];

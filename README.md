@@ -12,6 +12,8 @@ Artifacts gives you git repos you can create, fork and push from a Cloudflare Wo
 
 ## How it works
 
+![Agents write to their own forks; a merge agent braids them into main; a conflict waits for a person](docs/braid.svg)
+
 ```
  agent ──envelope──▶ Lane (one per agent) ──git push──▶ fork  <repo>--<agent>
                                                           │
@@ -64,6 +66,8 @@ One envelope becomes one commit on the agent's fork, with trailers (`Agent:`, `S
 
 You need a Cloudflare account on the Workers Paid plan with Artifacts enabled.
 
+First make it yours: in `wrangler.jsonc`, change `name` (the Worker), the Artifacts `namespace`, and `REPO` (the repo the viewer shows). Deploying with someone else's name would replace their Worker if you share an account.
+
 ```sh
 npm install
 npx wrangler login            # or CLOUDFLARE_API_TOKEN with Workers Scripts Edit and Artifacts Edit
@@ -83,6 +87,8 @@ To play the person yourself, run it on the repo the viewer shows (`REPO` in `wra
 ```sh
 curl -X POST -H "Authorization: Bearer $SPIKE_KEY" "https://<your-worker>/spike/scenario?repo=harbourne&rebuild=harbourne&mode=interactive"
 ```
+
+![The viewer: main runs down the page, each agent's lane braids back into it](docs/viewer.png)
 
 While it runs, open `https://<your-worker>/` and approve, undo and undo the undo when it waits on you. To act from a phone before Cloudflare Access is set up, open `https://<your-worker>/#key=<ACT_KEY>` once on that phone.
 

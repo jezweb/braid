@@ -52,6 +52,11 @@ function Braid({ state }: { state: State }) {
   const g = useMemo(() => layout(state, width), [state, width]);
   return (
     <div ref={box}>
+      {g.narrow && (
+        <ul className="legend" aria-label="Agents">
+          {[...g.lanes].sort((a, b) => a.x - b.x).map((l) => <li key={l.agent}><i style={{ background: l.colour }} />{l.agent}</li>)}
+        </ul>
+      )}
       <svg className="braid" viewBox={`0 0 ${width} ${g.height}`} height={g.height} role="img" aria-label={`Main and ${g.lanes.length} agent lanes over time`}>
         <defs>
           <pattern id="gravel" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
@@ -70,12 +75,12 @@ function Braid({ state }: { state: State }) {
           <g key={l.agent}>
             <path className="flow" d={l.channel} fill="none" stroke={l.colour} strokeWidth={4} strokeLinecap="round" opacity={0.55}
               style={{ ["--len" as string]: 2000, ["--delay" as string]: `${i * 60}ms` }} />
-            <text className="lane-label" x={l.x} y={g.top - 10 - l.row * 14} textAnchor="middle" fill={l.colour} style={{ fill: l.colour }}>{l.short}</text>
+            {!g.narrow && <text className="lane-label" x={l.x} y={g.top - 10} textAnchor="middle" fill={l.colour} style={{ fill: l.colour }}>{l.short}</text>}
           </g>
         ))}
         {/* main */}
         <line x1={g.mainX} x2={g.mainX} y1={g.top - 24} y2={g.bottom} stroke="var(--main)" strokeWidth={10} strokeLinecap="round" />
-        <text className="lane-label" x={g.mainX} y={g.top - 30 - (width < 600 ? 14 : 0)} textAnchor="middle" style={{ fill: "var(--main)" }}>main</text>
+        <text className="lane-label" x={g.mainX} y={g.top - 30} textAnchor="middle" style={{ fill: "var(--main)" }}>main</text>
         {/* each merge braids its lane back into main */}
         {g.merges.map((m, i) => (
           <g key={m.hash} className="hit" onClick={() => m.path && navigate(`/record?path=${encodeURIComponent(m.path)}`)}>
@@ -105,21 +110,27 @@ function layout(state: State, width: number) {
   const commits = [...state.main].reverse(); // oldest first: the river runs down the page
   const merges = commits.filter((c) => c.laneCommit && c.agent);
   const agents = [...new Set([...merges.map((c) => c.agent!), ...state.lanes.filter((l) => l.held).map((l) => l.agent)])];
-  const top = width < 600 ? 72 : 56, minGap = 14;
-  const now = Math.max(Date.now() / 1000, commits.at(-1)?.at ?? 0);
-  const t0 = commits[0]?.at ?? now;
-  const span = Math.max(now - t0, 1);
+  // On a phone the names do not fit over the channels: a legend above the river names them instead.
+  const narrow = width < 600;
+  const top = narrow ? 40 : 56, minGap = 14;
+  // The axis runs to now while the river is busy; once it goes quiet it ends at the last change,
+  // so a finished story fills the page instead of crowding the top of an empty one.
+  const last = commits.at(-1)?.at ?? Date.now() / 1000;
+  const live = Date.now() / 1000 - last < 120;
+  const t0 = commits[0]?.at ?? last;
+  const t1 = live ? Math.max(Date.now() / 1000, last) : last;
+  const span = Math.max(t1 - t0, 1);
   const scaleH = Math.max(360, Math.min(900, merges.length * 22));
 
   // Real time, pushed apart only where commits land in the same instant.
-  let last = -Infinity;
+  let lastY = -Infinity;
   const yOf = new Map<string, number>();
   for (const c of commits) {
-    const y = Math.max(top + ((c.at - t0) / span) * scaleH, last + minGap);
+    const y = Math.max(top + ((c.at - t0) / span) * scaleH, lastY + minGap);
     yOf.set(c.hash, y);
-    last = y;
+    lastY = y;
   }
-  const bottom = Math.max(last, top + scaleH) + 40;
+  const bottom = Math.max(lastY, top + scaleH) + 40;
 
   const mainX = Math.round(width / 2);
   const half = Math.ceil(agents.length / 2);
@@ -132,8 +143,7 @@ function layout(state: State, width: number) {
     const end = held ? bottom - 20 : (yOf.get(mine.at(-1)?.hash ?? "") ?? top + 40) - 18;
     const channel = `M ${mainX} ${top - 20} C ${mainX} ${top + 10}, ${x} ${top - 10}, ${x} ${top + 24} L ${x} ${Math.max(end, top + 24)}`;
     // On a narrow screen neighbouring labels would collide: lift every other one a row.
-    const row = width < 600 && Math.floor(i / 2) % 2 === 1 ? 1 : 0;
-    return { agent, x, row, colour: colourOf(agent), short: agent, channel };
+    return { agent, x, colour: colourOf(agent), short: agent, channel };
   });
   const xOf = new Map(lanes.map((l) => [l.agent, l.x]));
   const mergeMarks = merges.map((c) => {
@@ -153,9 +163,11 @@ function layout(state: State, width: number) {
   const ticks: { y: number; label: string }[] = [];
   for (let k = 0; k <= 3; k++) {
     const t = t0 + (span * k) / 3;
-    ticks.push({ y: Math.round(top + (k / 3) * scaleH), label: k === 3 ? "now" : ago(t) });
+    // A short story reads better on the clock than as "23m ago" twice.
+    const clock = new Date(t * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: span < 600 ? "2-digit" : undefined });
+    ticks.push({ y: Math.round(top + (k / 3) * scaleH), label: k === 3 && live ? "now" : span < 3600 ? clock : ago(t) });
   }
-  return { top, bottom, height: bottom + 8, mainX, lanes, merges: mergeMarks, bars, ticks } as const;
+  return { top, bottom, height: bottom + 8, mainX, lanes, merges: mergeMarks, bars, ticks, narrow } as const;
 }
 
 export type { Layout };

@@ -124,7 +124,8 @@ textarea.edit { width: 100%; min-height: 220px; font: 15px/1.5 var(--font-mono);
 .timeline .row .link { padding: 0 4px; min-height: 0; color: var(--ink-2); }
 .timeline .tag { color: var(--bar); font-weight: 600; font-size: 14px; }
 .folders { margin-top: 24px; display: grid; gap: 4px; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
-.folder a, .folder-name { color: var(--ink-2); font-family: var(--font-mono); font-size: 13px; text-decoration: none; background: none; border: 0; padding: 8px 0; text-align: left; min-height: 36px; }
+.folder a, .folder-name { display: inline-flex; align-items: center; color: var(--ink-2); font-family: var(--font-mono); font-size: 13px; line-height: 1.4; text-decoration: none; background: none; border: 0; padding: 8px 0; margin: 0; text-align: left; min-height: 36px; }
+.folder-name span { margin-left: 6px; }
 .folder-name span { color: var(--ink-3); }
 .folder ul { list-style: none; margin: 0 0 8px 12px; padding: 0; }
 .list { list-style: none; padding: 0; margin: 20px 0 0; columns: 2 220px; }
@@ -135,3 +136,7 @@ mark { background: var(--ins); color: var(--ins-ink); border-radius: 3px; }
 .compare summary { color: var(--ink-2); cursor: pointer; padding: 8px 0; min-height: 44px; display: flex; align-items: center; }
 .landing { background: var(--bar-wash); border-radius: var(--radius); padding: 10px 14px; }
 .timeline li.landed { background: var(--ins); border-radius: var(--radius); padding-left: 8px; padding-right: 8px; }
+
+.legend { list-style: none; margin: 0 0 6px; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 14px; font: 600 13px var(--font-head); color: var(--ink-2); }
+.legend li { display: inline-flex; align-items: center; gap: 6px; }
+.legend i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
