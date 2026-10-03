@@ -11,10 +11,12 @@ export function Live() {
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     let alive = true;
-    const tick = () => api.state().then((s) => alive && (setState(s), setError(null))).catch((e) => alive && setError(String(e)));
+    // Poll only while someone is looking: every read is a metered operation.
+    const tick = () => document.visibilityState === "visible" && api.state().then((s) => alive && (setState(s), setError(null))).catch((e) => alive && setError(String(e)));
     tick();
-    const t = setInterval(tick, 2500);
-    return () => { alive = false; clearInterval(t); };
+    const t = setInterval(tick, 4000);
+    document.addEventListener("visibilitychange", tick);
+    return () => { alive = false; clearInterval(t); document.removeEventListener("visibilitychange", tick); };
   }, []);
 
   if (!state) return <div className="page"><p className="note">{error ?? "Loading"}</p></div>;

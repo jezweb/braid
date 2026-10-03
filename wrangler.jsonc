@@ -16,5 +16,6 @@
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Lane", "MergeAgent"] }],
   "ai": { "binding": "AI" },
+  "ratelimits": [{ "name": "READS", "namespace_id": "1001", "simple": { "limit": 120, "period": 60 } }],
   "artifacts": [{ "binding": "ARTIFACTS", "namespace": "braid-demo", "remote": true }]
 }

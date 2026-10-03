@@ -21,6 +21,8 @@ export type ApiEnv = {
   DEMO_ACTOR?: string;
   /** Without Access, acting as DEMO_ACTOR needs this key in `x-demo-key`. It grants approve and undo only. */
   ACT_KEY?: string;
+  /** Per-visitor cap on public reads (each read costs Artifacts operations). */
+  READS?: RateLimit;
   /** Cloudflare Access: the team domain (https://<team>.cloudflareaccess.com) and the application's AUD tag. */
   ACCESS_TEAM?: string;
   ACCESS_AUD?: string;
@@ -92,6 +94,36 @@ async function textOf(repo: ArtifactsRepo, ref: string, path: string): Promise<s
 }
 
 export const api = new Hono<{ Bindings: ApiEnv; Variables: { actor: string } }>();
+
+// Public reads cost Artifacts operations (the metrics count every binding read as a "read" event), and
+// a viewer polls. So reads are cached in the isolate: anything addressed by a commit hash never changes
+// and is kept; main moves, so its views live for seconds. The Cache API is a no-op on workers.dev.
+const cache = new Map<string, { at: number; ttl: number; body: string }>();
+const CACHE_MAX = 2000;
+const IMMUTABLE = Number.POSITIVE_INFINITY;
+
+api.use("*", async (c, next) => {
+  if (c.req.method !== "GET") return next();
+  // One visitor cannot run up the bill: 120 reads a minute per address (the viewer needs about 15).
+  const who = c.req.header("cf-connecting-ip") ?? "unknown";
+  if (c.env.READS && !(await c.env.READS.limit({ key: who })).success) return c.json({ error: "slow down" }, 429);
+  const url = new URL(c.req.url);
+  url.searchParams.delete("cb");
+  const key = url.pathname + "?" + [...url.searchParams].sort().map(([k, v]) => `${k}=${v}`).join("&");
+  const hit = cache.get(key);
+  if (hit && Date.now() - hit.at < hit.ttl) return c.newResponse(hit.body, 200, { "content-type": "application/json", "x-braid-cache": "hit" });
+  await next();
+  if (c.res.status !== 200) return;
+  const ref = url.searchParams.get("ref");
+  const ttl =
+    url.pathname === "/api/record" && ref && /^[0-9a-f]{40}$/.test(ref) ? IMMUTABLE
+    : url.pathname === "/api/state" ? 2000
+    : url.pathname.startsWith("/api/approvals/") ? 2000
+    : 5000;
+  const body = await c.res.clone().text();
+  if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value!);
+  cache.set(key, { at: Date.now(), ttl, body });
+});
 
 api.get("/state", async (c) => {
   const env = c.env;

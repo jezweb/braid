@@ -15,7 +15,8 @@ export function Record({ path, after }: { path: string; after?: number }) {
 
   const load = useCallback(async () => {
     const [rec, hist] = await Promise.all([api.record(path), api.history(path)]);
-    const withDiffs = await Promise.all(hist.slice(0, 20).map(async (h) => {
+    // Diffs for the latest six changes; past versions never change, so the API caches them for good.
+    const withDiffs = await Promise.all(hist.slice(0, 6).map(async (h) => {
       const r = await api.record(path, h.commit);
       return { ...h, before: r.before ?? null, after: r.after };
     }));
@@ -28,7 +29,8 @@ export function Record({ path, after }: { path: string; after?: number }) {
   useEffect(() => {
     let alive = true;
     load().catch((e) => alive && setError(String(e)));
-    const t = setInterval(() => load().catch(() => undefined), 4000);
+    // Refresh only while visible; past versions are fetched once (they never change) and cached by the API.
+    const t = setInterval(() => document.visibilityState === "visible" && load().catch(() => undefined), 10000);
     return () => { alive = false; clearInterval(t); };
   }, [load]);
 

@@ -270,8 +270,10 @@ export class MergeAgent extends DurableObject<Env> {
       const t = parseMessage(c.message).trailers;
       if (t.laneCommit && t.agent === agent) onMain.add(t.laneCommit);
     }
-    const [ct, lt] = await Promise.all([canonical.createToken("write", 900), laneRepo.createToken("read", 900)]);
-    const canonicalInfo = await canonical.info();
+    // Tokens are reused until close to expiry: minting is itself a metered event (token_create).
+    const ct = await this.token(canonical, `tok:canonical`, "write");
+    const lt = await this.token(laneRepo, `tok:lane:${agent}`, "read");
+    const canonicalInfo = await this.canonicalInfo(canonical);
     const result = await mergeLane(
       { url: canonicalInfo.remote, token: ct.plaintext },
       { url: known.remote, token: lt.plaintext },
@@ -308,6 +310,23 @@ export class MergeAgent extends DurableObject<Env> {
     );
     this.ctx.storage.sql.exec(`UPDATE approvals SET status = 'superseded' WHERE agent = ? AND status = 'open' AND lane_commit IS NOT ?`, agent, held);
     if (folded.length) await this.ack(repo, agent, []);
+  }
+
+  private tokens = new Map<string, { plaintext: string; until: number }>();
+  private info?: ArtifactsRepoInfo;
+
+  private async token(repo: ArtifactsRepo, key: string, scope: "read" | "write") {
+    const t = this.tokens.get(key);
+    if (t && t.until - Date.now() > 120_000) return t;
+    const fresh = await repo.createToken(scope, 900);
+    const v = { plaintext: fresh.plaintext, until: Date.now() + 900_000 };
+    this.tokens.set(key, v);
+    return v;
+  }
+
+  private async canonicalInfo(repo: ArtifactsRepo) {
+    this.info ??= await repo.info();
+    return this.info;
   }
 
   // ---------------------------------------------------------------- approvals
@@ -417,6 +436,8 @@ export class MergeAgent extends DurableObject<Env> {
       this.ctx.storage.sql.exec(`DELETE FROM lanes`);
       this.ctx.storage.sql.exec(`DELETE FROM approvals`);
       await this.ctx.storage.delete([...(await this.ctx.storage.list()).keys()]);
+      this.tokens.clear();
+      this.info = undefined;
       return agents;
     });
   }
