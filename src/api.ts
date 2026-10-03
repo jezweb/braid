@@ -30,9 +30,21 @@ export type ApiEnv = {
 
 /** The verified email from a Cloudflare Access JWT, or undefined. Only trusted when ACCESS_TEAM and ACCESS_AUD are set. */
 export async function accessEmail(env: ApiEnv, jwt: string | undefined): Promise<string | undefined> {
-  if (!env.ACCESS_TEAM || !env.ACCESS_AUD || !jwt) return undefined;
+  return (await accessCheck(env, jwt)).email;
+}
+
+/** The verified email, or why there is none (kept in the act log so a failed sign-in explains itself). */
+export async function accessCheck(env: ApiEnv, jwt: string | undefined): Promise<{ email?: string; why?: string }> {
+  if (!env.ACCESS_TEAM || !env.ACCESS_AUD) return { why: "access not configured" };
+  if (!jwt) return { why: "no access token" };
+  const r = await verifyAccess(env, jwt);
+  return typeof r === "string" ? { why: r } : { email: r.email };
+}
+
+async function verifyAccess(env: ApiEnv, jwt: string): Promise<string | { email: string }> {
+  if (!env.ACCESS_TEAM || !env.ACCESS_AUD) return "access not configured";
   const [h, p, sig] = jwt.split(".");
-  if (!h || !p || !sig) return undefined;
+  if (!h || !p || !sig) return "malformed token";
   // JWT segments are base64url without padding; atob wants standard base64 padded to a multiple of 4.
   const dec = (x: string) => {
     const b = x.replace(/-/g, "+").replace(/_/g, "/");
@@ -43,17 +55,20 @@ export async function accessEmail(env: ApiEnv, jwt: string | undefined): Promise
     header = JSON.parse(new TextDecoder().decode(dec(h)));
     payload = JSON.parse(new TextDecoder().decode(dec(p)));
   } catch {
-    return undefined;
+    return "undecodable token";
   }
-  if (header.alg !== "RS256") return undefined;
+  if (header.alg !== "RS256") return `alg ${header.alg}`;
   const auds = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
-  if (!auds.includes(env.ACCESS_AUD) || (payload.exp ?? 0) * 1000 < Date.now() || payload.iss !== env.ACCESS_TEAM) return undefined;
+  if (!auds.includes(env.ACCESS_AUD)) return "wrong audience";
+  if ((payload.exp ?? 0) * 1000 < Date.now()) return "expired";
+  if (payload.iss !== env.ACCESS_TEAM) return `issuer ${payload.iss}`;
   const certs = (await (await fetch(`${env.ACCESS_TEAM}/cdn-cgi/access/certs`)).json()) as { keys: (JsonWebKey & { kid: string })[] };
   const jwk = certs.keys.find((k) => k.kid === header.kid);
-  if (!jwk) return undefined;
+  if (!jwk) return `no cert for kid ${header.kid}`;
   const key = await crypto.subtle.importKey("jwk", jwk, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["verify"]);
   const ok = await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, dec(sig), new TextEncoder().encode(`${h}.${p}`));
-  return ok ? payload.email : undefined;
+  if (!ok) return "bad signature";
+  return payload.email ? { email: payload.email } : "no email claim";
 }
 
 export type MainCommit = {
@@ -191,15 +206,20 @@ api.get("/records", async (c) => {
 api.use("/act/*", async (c, next) => {
   // Identity comes from a verified Cloudflare Access JWT, never from a header a caller could set.
   // Until Access is configured, DEMO_ACTOR stands in for holders of ACT_KEY (and says so in every trailer).
-  const verified = await accessEmail(c.env, c.req.header("cf-access-jwt-assertion"));
+  const jwt = c.req.header("cf-access-jwt-assertion");
+  const check = await accessCheck(c.env, jwt);
   const demo = !!c.env.DEMO_ACTOR && !!c.env.ACT_KEY && c.req.header("x-demo-key") === c.env.ACT_KEY;
-  const actor = verified ?? (demo ? `${c.env.DEMO_ACTOR} (demo)` : undefined);
-  if (!actor) return c.json({ error: "sign in to act" }, 401);
+  const actor = check.email ?? (demo ? `${c.env.DEMO_ACTOR} (demo)` : undefined);
+  // Every attempt is logged (no token values): a failed decision from a phone must explain itself.
+  const log = (status: number, note?: string) =>
+    mergeAgent(c.env).logAct({ at: Date.now(), path: new URL(c.req.url).pathname, token: !!jwt, why: check.why, actor: actor ?? null, status, note }).catch(() => undefined);
+  if (!actor) { await log(401); return c.json({ error: "sign in to act" }, 401); }
   // Acting is only ever on REPO. A viewer watching another repo must not resolve REPO's approval with the same id.
   const named = c.req.query("repo");
-  if (named !== repoOf(c.env)) return c.json({ error: `actions apply to ${repoOf(c.env)} only` }, 409);
+  if (named !== repoOf(c.env)) { await log(409, `repo ${named}`); return c.json({ error: `actions apply to ${repoOf(c.env)} only` }, 409); }
   c.set("actor", actor);
   await next();
+  await log(c.res.status);
 });
 
 api.post("/act/approvals/:id", async (c) => {

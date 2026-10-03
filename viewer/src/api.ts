@@ -92,7 +92,8 @@ async function act<T>(path: string, body: unknown): Promise<T> {
   // Name the repo being acted on; the server refuses any but the one it acts for.
   const repo = new URLSearchParams(location.search).get("repo") ?? (await get<State>("/state")).actOn;
   // Behind Cloudflare Access, a request with no sign-in is redirected to the login page: treat that as "sign in".
-  const r = await fetch(`/api/act${path}?repo=${encodeURIComponent(repo)}`, { method: "POST", headers, body: JSON.stringify(body), redirect: "manual" });
+  // Under /approve/, inside the path the Access sign-in covers, so its cookie always travels with the decision.
+  const r = await fetch(`/approve/api/act${path}?repo=${encodeURIComponent(repo)}`, { method: "POST", headers, body: JSON.stringify(body), redirect: "manual" });
   if (r.type === "opaqueredirect" || r.status === 401 || r.status === 403) throw new Error("sign in to act");
   const data = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error((data as { error?: string }).error ?? `${r.status}`);

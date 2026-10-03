@@ -442,6 +442,17 @@ export class MergeAgent extends DurableObject<Env> {
     });
   }
 
+  /** The last 50 attempts to act (approve, undo): who, whether a sign-in token came and verified, the answer. */
+  async logAct(entry: { at: number; path: string; token: boolean; why?: string; actor: string | null; status: number; note?: string }): Promise<void> {
+    const log = (await this.ctx.storage.get<typeof entry[]>("actlog")) ?? [];
+    log.push(entry);
+    await this.ctx.storage.put("actlog", log.slice(-50));
+  }
+
+  async actLog(): Promise<unknown[]> {
+    return (await this.ctx.storage.get<unknown[]>("actlog")) ?? [];
+  }
+
   async status(): Promise<{ lanes: LaneStatus[]; open: number; alarm: number | null }> {
     const lanes = this.ctx.storage.sql.exec<LaneStatus>(`SELECT agent, since, dirty, merged, held, error FROM lanes ORDER BY agent`).toArray();
     const open = this.ctx.storage.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM approvals WHERE status = 'open'`).one().n;

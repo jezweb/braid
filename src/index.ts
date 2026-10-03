@@ -34,6 +34,9 @@ type Env = {
 const app = new Hono<{ Bindings: Env }>();
 
 app.route("/api", api);
+// The same API under /approve/: decisions travel inside the path the Access sign-in covers, so the sign-in
+// cookie always comes with them.
+app.route("/approve/api", api);
 
 // G0 spike: local dev only (SPIKE=1 in .dev.vars). Removed once G0 passes on Artifacts.
 app.post("/spike/merge", async (c) => {
@@ -142,6 +145,13 @@ app.post("/spike/conflict", async (c) => {
   await lane("editor").write(repo, { agent: "editor", reason: "Summary: lead with the river", changes: [{ path, base: e.base, content: e.content.replace(first, "On the river, " + first.charAt(0).toLowerCase() + first.slice(1)) }] });
   await lane("translator").write(repo, { agent: "translator", reason: "Summary: simpler opening", changes: [{ path, base: t.base, content: t.content.replace(first, first + " and it is easy to visit") }] });
   return c.json({ ok: true, sentence: first });
+});
+
+app.get("/spike/act-log", async (c) => {
+  const key = c.env.SPIKE_KEY;
+  if (!key || c.req.header("authorization") !== `Bearer ${key}`) return c.notFound();
+  const repo = c.env.REPO ?? "memory";
+  return c.json(await c.env.MERGE_AGENT.get(c.env.MERGE_AGENT.idFromName(repo)).actLog());
 });
 
 // Rebuild the demo repo (REPO) from scratch and leave it mid-story: lanes merged, one approval open.

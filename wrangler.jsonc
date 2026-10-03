@@ -6,7 +6,7 @@
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
   "observability": { "enabled": true },
-  "assets": { "directory": "./dist/viewer", "binding": "ASSETS", "not_found_handling": "single-page-application", "run_worker_first": ["/api/*", "/spike/*"] },
+  "assets": { "directory": "./dist/viewer", "binding": "ASSETS", "not_found_handling": "single-page-application", "run_worker_first": ["/api/*", "/approve/api/*", "/spike/*"] },
   "vars": { "REPO": "harbourne", "PERSON_AGENT": "person", "DEMO_ACTOR": "demo-person@braid.invalid" },
   "durable_objects": {
     "bindings": [
