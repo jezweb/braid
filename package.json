@@ -1,0 +1,25 @@
+{
+  "name": "braid",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "dev": "wrangler dev",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "git-server": "node test/git-server.mjs"
+  },
+  "dependencies": {
+    "hono": "^4.13.12",
+    "isomorphic-git": "^1.42.6",
+    "node-diff3": "^3.2.1"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261003.1",
+    "@types/node": "^26.6.4",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.3",
+    "wrangler": "^4.147.0"
+  }
+}
