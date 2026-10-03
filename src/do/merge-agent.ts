@@ -55,6 +55,10 @@ export class MergeAgent extends DurableObject<Env> {
       ctx.storage.sql.exec(`CREATE TABLE IF NOT EXISTS lanes (
         agent TEXT PRIMARY KEY, since TEXT, dirty INTEGER NOT NULL DEFAULT 0, merged INTEGER NOT NULL DEFAULT 0,
         held TEXT, error TEXT)`);
+      // Added after the first deploy: the tip a sweep last queued, and consecutive fold failures.
+      for (const col of ["swept TEXT", "fails INTEGER NOT NULL DEFAULT 0"]) {
+        try { ctx.storage.sql.exec(`ALTER TABLE lanes ADD COLUMN ${col}`); } catch { /* already there */ }
+      }
       ctx.storage.sql.exec(`CREATE TABLE IF NOT EXISTS approvals (
         id INTEGER PRIMARY KEY AUTOINCREMENT, agent TEXT NOT NULL, lane_commit TEXT NOT NULL, path TEXT NOT NULL,
         base TEXT, ours TEXT, theirs TEXT, base_text TEXT, ours_text TEXT, theirs_text TEXT, conflicts TEXT,
@@ -154,9 +158,41 @@ export class MergeAgent extends DurableObject<Env> {
     if ((await this.ctx.storage.getAlarm()) === null) await this.ctx.storage.setAlarm(Date.now() + 200);
   }
 
+  /**
+   * Watch every lane for `seconds`: agents that push with plain git tell nobody, so the merger
+   * looks at each lane's head every few seconds and queues any that moved.
+   */
+  async watch(repo: string, seconds: number): Promise<void> {
+    await this.pin(repo);
+    if (!(seconds > 0)) throw new Error("seconds must be positive");
+    // A shorter request never cuts short a longer watch already running.
+    const until = Math.max((await this.ctx.storage.get<number>("sweepUntil")) ?? 0, Date.now() + Math.min(seconds, 3600) * 1000);
+    await this.ctx.storage.put("sweepUntil", until);
+    if ((await this.ctx.storage.getAlarm()) === null) await this.ctx.storage.setAlarm(Date.now() + 200);
+  }
+
+  private async sweep(repo: string) {
+    const lanes = this.ctx.storage.sql.exec<{ agent: string; since: string | null; held: string | null; swept: string | null }>(`SELECT agent, since, held, swept FROM lanes`).toArray();
+    for (const l of lanes) {
+      try {
+        using r = await this.env.ARTIFACTS.get(`${repo}--${l.agent}`);
+        const head = (await r.log({ ref: "main", limit: 1 }))[0]?.hash;
+        // Queue a lane once per new tip: a tip stuck behind a held commit is not re-folded every sweep.
+        if (head && head !== l.since && head !== l.held && head !== l.swept) {
+          this.ctx.storage.sql.exec(`UPDATE lanes SET dirty = dirty + 1, swept = ? WHERE agent = ?`, head, l.agent);
+        }
+      } catch (e) {
+        console.error(JSON.stringify({ event: "sweep_failed", agent: l.agent, error: String(e) }));
+      }
+    }
+  }
+
   async alarm(): Promise<void> {
     try {
+      const until = (await this.ctx.storage.get<number>("sweepUntil")) ?? 0;
+      if (until > Date.now()) await this.sweep((await this.ctx.storage.get<string>("repo"))!);
       await this.serial(() => this.drain());
+      if (until > Date.now() && (await this.ctx.storage.getAlarm()) === null) await this.ctx.storage.setAlarm(Date.now() + 5000);
       await this.ctx.storage.delete("alarmRetries");
     } catch (err) {
       // An alarm that throws stops the chain: retry with backoff, a bounded number of times.
@@ -182,10 +218,15 @@ export class MergeAgent extends DurableObject<Env> {
       try {
         await this.foldLane(repo, row.agent);
         // Clear only the notifications we have seen: a write that arrived meanwhile keeps the lane dirty.
-        this.ctx.storage.sql.exec(`UPDATE lanes SET dirty = MAX(dirty - ?, 0) WHERE agent = ?`, row.dirty, row.agent);
+        this.ctx.storage.sql.exec(`UPDATE lanes SET dirty = MAX(dirty - ?, 0), fails = 0 WHERE agent = ?`, row.dirty, row.agent);
       } catch (err) {
         failed++;
-        this.ctx.storage.sql.exec(`UPDATE lanes SET error = ? WHERE agent = ?`, String(err).slice(0, 500), row.agent);
+        // Five failures in a row (say, history rewritten so it no longer reaches `since`): stop retrying
+        // that lane until something new arrives on it. The error stays on the lane for a person to see.
+        this.ctx.storage.sql.exec(
+          `UPDATE lanes SET error = ?, fails = fails + 1, dirty = CASE WHEN fails + 1 >= 5 THEN 0 ELSE dirty END WHERE agent = ?`,
+          String(err).slice(0, 500), row.agent,
+        );
         console.error(JSON.stringify({ event: "fold_failed", agent: row.agent, error: String(err) }));
       }
     }
@@ -231,7 +272,7 @@ export class MergeAgent extends DurableObject<Env> {
     const result = await mergeLane(
       { url: canonicalInfo.remote, token: ct.plaintext },
       { url: known.remote, token: lt.plaintext },
-      { since, onMain, overrides: (laneCommit, path) => this.override(laneCommit, path), attempts: 5 },
+      { since, onMain, agent, overrides: (laneCommit, path) => this.override(laneCommit, path), attempts: 5 },
     );
 
     const mergedNow = result.outcomes.filter((o) => o.status === "merged").map((o) => o.laneCommit);

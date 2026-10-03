@@ -89,6 +89,28 @@ app.post("/spike/agent-edit", async (c) => {
   return c.json(await lane.write(repo, { agent, reason: reason ?? `${agent} edits ${path}`, changes: [{ path, base: r.base, content: r.content.replace(find, replace) }] }));
 });
 
+// A plain-git agent's fork: its remote and a write token for that fork only, and the merger watching for its pushes.
+app.post("/spike/lane-token", async (c) => {
+  const key = c.env.SPIKE_KEY;
+  if (!key || c.req.header("authorization") !== `Bearer ${key}`) return c.notFound();
+  const { agent, watch } = await c.req.json<{ agent: string; watch?: number }>();
+  if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(agent ?? "")) return c.json({ error: "agent must be a slug" }, 400);
+  const repo = c.env.REPO ?? "memory";
+  const ma = c.env.MERGE_AGENT.get(c.env.MERGE_AGENT.idFromName(repo));
+  const info = await ma.provisionLane(repo, agent);
+  await ma.watch(repo, watch ?? 600);
+  return c.json({ remote: info.remote, token: info.token, forkPoint: info.forkPoint });
+});
+
+// A read token for the canonical repo: for `git clone` and `git log --graph` on main.
+app.post("/spike/read-token", async (c) => {
+  const key = c.env.SPIKE_KEY;
+  if (!key || c.req.header("authorization") !== `Bearer ${key}`) return c.notFound();
+  using r = await c.env.ARTIFACTS.get(c.env.REPO ?? "memory");
+  const [info, t] = await Promise.all([r.info(), r.createToken("read", 3600)]);
+  return c.json({ remote: info.remote, token: t.plaintext });
+});
+
 // Rebuild the demo repo (REPO) from scratch and leave it mid-story: lanes merged, one approval open.
 app.post("/spike/demo-seed", async (c) => {
   const key = c.env.SPIKE_KEY;

@@ -2,7 +2,7 @@
 // two-parent merge commit each, pushed fast-forward in one push. Built on a
 // shallow in-memory store; merge decisions come from the merge table.
 
-import { formatMessage, laneTrailers, type Resolution } from "./contract";
+import { formatMessage, laneTrailers, parseMessage, type Resolution } from "./contract";
 import { mergeRecord, type Conflict } from "./merge";
 import { NotTextError, PathCollisionError, PushRejectedError, Store, type Remote } from "./git/store";
 
@@ -40,6 +40,12 @@ export type MergeLaneResult = {
 export type MergeLaneOptions = {
   /** The last lane commit already folded into main, or the commit the lane forked from. */
   since: string;
+  /**
+   * The lane's agent. When set, a commit with no braid trailers at all (a plain `git push`) is
+   * accepted as that agent's envelope: its paths are the commit's diff against its parent, and
+   * each base is the parent's blob. Partial or malformed trailers are still refused.
+   */
+  agent?: string;
   laneRef?: string;
   /** How much lane history to fetch; a lane further than this behind `since` is an error. */
   depth?: number;
@@ -95,7 +101,7 @@ export async function mergeLane(canonical: Remote, lane: Remote, opts: MergeLane
     outcomes = [];
     head = mainNow;
     for (const laneCommit of pending) {
-      const outcome = await foldOne(store, head, laneCommit, readBase, opts.author, opts.overrides);
+      const outcome = await foldOne(store, head, laneCommit, readBase, opts.author, opts.overrides, opts.agent);
       outcomes.push(outcome);
       if (outcome.status !== "merged") break;
       head = outcome.mergeCommit;
@@ -123,9 +129,22 @@ async function foldOne(
   readBase: (oid: string) => Promise<string>,
   author = { name: "braid-merge", email: "merge@braid.invalid" },
   overrides?: MergeLaneOptions["overrides"],
+  agent?: string,
 ): Promise<LaneOutcome> {
   const c = await store.readCommit(laneCommit);
-  const t = laneTrailers(c.message);
+  let parsed = parseMessage(c.message);
+  if (parsed.errors.length) return { status: "invalid", laneCommit, errors: parsed.errors };
+  // Bare means no braid trailer of any kind; a partial set (a lone Resolution:, Reverts:, Source:) is refused below.
+  const { recordPaths, ...rest } = parsed.trailers;
+  const bare = recordPaths.length === 0 && Object.values(rest).every((v) => v === undefined);
+  if (bare && agent) {
+    // A plain git commit: the diff is the envelope.
+    const parentTree = (await store.readCommit(c.parents[0])).tree;
+    const paths = await store.changedPaths(parentTree, c.tree);
+    const recordPaths = await Promise.all(paths.map(async (path) => ({ path, base: await store.blobAt(c.parents[0], path) })));
+    parsed = { ...parsed, trailers: { ...parsed.trailers, agent, source: "git push", recordPaths } };
+  }
+  const t = laneTrailers(formatMessage(parsed.subject, parsed.trailers, parsed.body));
   if (!t.ok) return { status: "invalid", laneCommit, errors: t.errors };
   const { subject, trailers } = t.parsed;
 

@@ -226,4 +226,38 @@ describe("mergeLane: folding lane commits into main", async () => {
     expect(again.outcomes).toEqual([]);
     expect(again.mainAfter).toBe(again.mainBefore);
   });
+  it("a plain git push (no trailers) merges as the lane's agent, its paths and bases taken from the diff", async () => {
+    const pg = lane("claude-code");
+    const before = raw(pg.dir, "show", "HEAD:places/mill.md");
+    pg.write("ignored", [{ path: "places/mill.md", base: null, content: before + "\nOpen on Saturdays.\n" }, { path: "notes/claude-code.md", base: null, content: "hello\n" }], "Mill hours, from a plain git session");
+    const refused = await mergeLane(url("memory"), url("memory--claude-code"), { since: pg.forkPoint });
+    expect(refused.outcomes[0].status).toBe("invalid");
+    const r = await mergeLane(url("memory"), url("memory--claude-code"), { since: pg.forkPoint, agent: "claude-code" });
+    expect(r.outcomes[0], JSON.stringify(r.outcomes)).toMatchObject({ status: "merged" });
+    const t = parseMessage(sh(w.bare("memory"), "log", "-1", "--format=%B", "main"));
+    expect(t.subject).toBe("Mill hours, from a plain git session");
+    expect(t.trailers).toMatchObject({ agent: "claude-code", source: "git push" });
+    expect(t.trailers.recordPaths.map((p) => p.path).sort()).toEqual(["notes/claude-code.md", "places/mill.md"]);
+    expect(show("places/mill.md")).toContain("Open on Saturdays.");
+    fsck();
+  });
+  it("trailer problems are never laundered by the plain-git path", async () => {
+    const ty = lane("tricky");
+    const before = main();
+    const base = ty.blob("places/mill.md");
+    // Duplicate Agent: an error, even with a lane agent named.
+    ty.write("x", [{ path: "places/mill.md", base, content: "# Mill\nx\n" }], `dup\n\nAgent: tricky\nAgent: someone-else\nRecord-Path: places/mill.md ${base}\n`);
+    const r1 = await mergeLane(url("memory"), url("memory--tricky"), { since: ty.forkPoint, agent: "tricky" });
+    expect(r1.outcomes[0].status).toBe("invalid");
+    expect(main()).toBe(before);
+  });
+
+  it("a lone Resolution: trailer is partial, not bare", async () => {
+    const lo = lane("lonely");
+    const before = main();
+    lo.write("x", [{ path: "notes/lonely.md", base: null, content: "x\n" }], "partial\n\nResolution: human\n");
+    const r = await mergeLane(url("memory"), url("memory--lonely"), { since: lo.forkPoint, agent: "lonely" });
+    expect(r.outcomes[0].status).toBe("invalid");
+    expect(main()).toBe(before);
+  });
 });
