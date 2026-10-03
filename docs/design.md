@@ -38,7 +38,7 @@ Artifacts tokens are scoped to a repo with only `read` and `write`, and there is
 - **write(envelope)** goes to the agent's `Lane`. The DO validates it, applies the changes to the lane's tree, commits with the lane trailers and pushes to the fork. Writes from one agent never race: the DO runs them one at a time. Returns the lane commit.
 - **read(agent, path)** returns `{ content, base }`. The agent's own pending (unmerged) writes win; otherwise `main` through the binding. `base` is the blob to name in the next envelope, so a second write before the first merges never conflicts with itself.
 - **history(path)** reads `main`'s log and keeps commits whose `Record-Path:` names the path.
-- **revert(agent, commit, path)** is a write: content is the path as it was before `commit`, base is `main`'s blob now. Undo is undoable, and an undo after a later edit becomes a conflict for a person, never a clobber.
+- **revert(agent, commit, path)** is a write: content is the path as it was before `commit`, and base is the blob `commit` produced (not main's blob now, which would let an undo erase a later edit). If main has not touched the path since, the undo merges clean; if a later edit touched other lines it still merges; if it overlaps, a person decides. An undo of an undo restores.
 
 ## Merge rules
 

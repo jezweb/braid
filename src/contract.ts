@@ -20,6 +20,10 @@ export type Envelope = {
   reason: string;
   /** Evidence. */
   source?: string;
+  /** The main commit this envelope undoes. */
+  reverts?: string;
+  /** Caller's id for this write: a retry with the same id returns the first result instead of writing twice. */
+  id?: string;
 };
 
 export type Resolution = "clean" | "field" | "llm" | "human";
@@ -35,10 +39,17 @@ export type Trailers = {
   resolution?: Resolution;
   approvedBy?: string;
   reverts?: string;
+  writeId?: string;
 };
 
 /** `errors` names every trailer line that could not be read; a merge must refuse a lane commit with any. */
 export type ParsedMessage = { subject: string; body: string; trailers: Trailers; errors: string[] };
+
+/** Content per envelope. Pending writes are kept in Durable Object storage (2 MB per value). */
+export const MAX_ENVELOPE_CHARS = 512 * 1024;
+
+/** Paths per envelope. A bulk import larger than this is several envelopes. */
+export const MAX_ENVELOPE_PATHS = 100;
 
 const SLUG = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const OID = /^[0-9a-f]{40}$/;
@@ -52,7 +63,13 @@ export function validateEnvelope(e: Envelope): Envelope {
   if (!SLUG.test(e.agent ?? "")) fail(`agent must be a slug: ${JSON.stringify(e.agent)}`);
   if (!e.reason?.trim() || /[\r\n]/.test(e.reason)) fail("reason must be one non-empty line");
   if (e.source !== undefined && /[\r\n]/.test(e.source)) fail("source must be one line");
+  if (e.reverts !== undefined && !OID.test(e.reverts)) fail("reverts must be a commit SHA");
+  if (e.id !== undefined && !/^[A-Za-z0-9_.:-]{1,128}$/.test(e.id)) fail("id must be 1 to 128 of A-Z a-z 0-9 _ . : -");
+  let bytes = 0;
+  for (const c of e.changes ?? []) bytes += c.content?.length ?? 0;
+  if (bytes > MAX_ENVELOPE_CHARS) fail(`envelope content over ${MAX_ENVELOPE_CHARS} characters`);
   if (!Array.isArray(e.changes) || e.changes.length === 0) fail("changes must be a non-empty list");
+  if (e.changes.length > MAX_ENVELOPE_PATHS) fail(`at most ${MAX_ENVELOPE_PATHS} paths per envelope`);
   const seen = new Set<string>();
   for (const c of e.changes) {
     if (!isRecordPath(c.path)) fail(`bad path: ${JSON.stringify(c.path)}`);
@@ -80,6 +97,8 @@ export function laneMessage(e: Envelope): string {
     agent: e.agent,
     source: e.source,
     recordPaths: e.changes.map((c) => ({ path: c.path, base: c.base })),
+    reverts: e.reverts,
+    writeId: e.id,
   });
 }
 
@@ -92,6 +111,7 @@ export function formatMessage(subject: string, t: Trailers, body = ""): string {
   if (t.resolution) lines.push(`Resolution: ${t.resolution}`);
   if (t.approvedBy) lines.push(`Approved-By: ${t.approvedBy}`);
   if (t.reverts) lines.push(`Reverts: ${t.reverts}`);
+  if (t.writeId) lines.push(`Write-Id: ${t.writeId}`);
   return [subject.trim(), body.trim(), lines.join("\n")].filter(Boolean).join("\n\n") + "\n";
 }
 
@@ -126,6 +146,7 @@ export function parseMessage(message: string): ParsedMessage {
         case "Lane-Commit": once(key, trailers.laneCommit); if (OID.test(val)) trailers.laneCommit = val; else errors.push(`bad Lane-Commit: ${val}`); break;
         case "Resolution": once(key, trailers.resolution); if ((RESOLUTIONS as string[]).includes(val)) trailers.resolution = val as Resolution; else errors.push(`bad Resolution: ${val}`); break;
         case "Approved-By": once(key, trailers.approvedBy); trailers.approvedBy = val; break;
+        case "Write-Id": once(key, trailers.writeId); trailers.writeId = val; break;
         case "Reverts": once(key, trailers.reverts); if (OID.test(val)) trailers.reverts = val; else errors.push(`bad Reverts: ${val}`); break;
       }
     }

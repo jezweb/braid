@@ -157,4 +157,41 @@ describe("mergeLane: folding lane commits into main", async () => {
     expect(show("towns/harbourne.md")).toContain("555 0142");
     fsck();
   });
+  it("undo: clean when main is untouched, undo of undo restores, undo after an overlapping edit conflicts", async () => {
+    const un = lane("undoer");
+    const P = "places/mill.md";
+    const blobAt = (ref: string) => { try { return sh(w.bare("memory"), "rev-parse", `${ref}:${P}`); } catch { return null; } };
+    const textAt = (ref: string) => raw(w.bare("memory"), "show", `${ref}:${P}`);
+    // An undo envelope as revertEnvelope builds it: content before `target`, base = what `target` produced.
+    const undo = (target: string) => ({ path: P, base: blobAt(target), content: textAt(`${target}^1`) });
+    let since = un.forkPoint;
+    const fold = async () => {
+      const r = await mergeLane(url("memory"), url("memory--undoer"), { since });
+      since = r.outcomes.at(-1)?.laneCommit ?? since;
+      return r;
+    };
+
+    expect(sh(w.bare("memory"), "log", "-1", "--format=%s", "main", "--", P)).toBe("Mill: add owner");
+    const lastMill = sh(w.bare("memory"), "log", "-1", "--format=%H", "main", "--", P);
+    const before = textAt(`${lastMill}^1`), after = textAt(lastMill);
+    un.write("Undo: Mill: add owner", [undo(lastMill)], laneMessage({ agent: "undoer", reason: "Undo: Mill: add owner", changes: [undo(lastMill)], reverts: lastMill }));
+    const r1 = await fold();
+    expect(r1.outcomes[0].status).toBe("merged");
+    expect(show(P)).toBe(before);
+    expect(parseMessage(sh(w.bare("memory"), "log", "-1", "--format=%B", "main")).trailers.reverts).toBe(lastMill);
+
+    const u1 = main();
+    un.write("Undo: Undo", [undo(u1)], laneMessage({ agent: "undoer", reason: "Undo: Undo", changes: [undo(u1)], reverts: u1 }));
+    expect((await fold()).outcomes[0].status).toBe("merged");
+    expect(show(P)).toBe(after);
+
+    // A later edit to the same line, then an undo of the commit before it: a person decides.
+    const u2 = main();
+    c.write(P, after.replace("Pell family", "Pell and Daughters"));
+    c.commit("Mill: new owner name");
+    un.write("Undo: Undo: Undo", [undo(u2)], laneMessage({ agent: "undoer", reason: "Undo again", changes: [undo(u2)], reverts: u2 }));
+    const r3 = await fold();
+    expect(r3.outcomes[0]).toMatchObject({ status: "conflict" });
+    expect(show(P)).toContain("Pell and Daughters");
+  });
 });

@@ -4,7 +4,20 @@ import type { Remote } from "./git/store";
 import { runG0 } from "./g0";
 import { runMergeRace, runRace } from "./spike-race";
 
-type Env = { SPIKE?: string; SPIKE_KEY?: string; ARTIFACTS: Artifacts };
+import type { Lane } from "./do/lane";
+import type { MergeAgent } from "./do/merge-agent";
+import { runG1 } from "./g1";
+
+export { Lane } from "./do/lane";
+export { MergeAgent } from "./do/merge-agent";
+
+type Env = {
+  SPIKE?: string;
+  SPIKE_KEY?: string;
+  ARTIFACTS: Artifacts;
+  LANE: DurableObjectNamespace<Lane>;
+  MERGE_AGENT: DurableObjectNamespace<MergeAgent>;
+};
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -39,6 +52,12 @@ app.post("/spike/merge-race", async (c) => {
   const key = c.env.SPIKE_KEY;
   if (!key || c.req.header("authorization") !== `Bearer ${key}`) return c.notFound();
   return c.json(await runMergeRace(c.env.ARTIFACTS, Number(c.req.query("lanes") ?? 4)));
+});
+
+app.post("/spike/g1", async (c) => {
+  const key = c.env.SPIKE_KEY;
+  if (!key || c.req.header("authorization") !== `Bearer ${key}`) return c.notFound();
+  return c.json(await runG1(c.env));
 });
 
 export default app;
