@@ -18,6 +18,7 @@ export type LaneStatus = { agent: string; since: string | null; dirty: number; m
 
 export type State = {
   repo: string;
+  missing?: boolean;
   main: MainCommit[];
   lanes: LaneStatus[];
   approvals: { id: number; agent: string; path: string; createdAt: number; hasProposal: boolean }[];
@@ -70,8 +71,14 @@ function demoKey(): string | null {
   try { return localStorage.getItem(KEY); } catch { return null; }
 }
 
+/** ?repo= on the page carries to every read, so any scene in the namespace can be watched. */
+function withRepo(path: string): string {
+  const repo = new URLSearchParams(location.search).get("repo");
+  return repo ? `${path}${path.includes("?") ? "&" : "?"}repo=${encodeURIComponent(repo)}` : path;
+}
+
 async function get<T>(path: string): Promise<T> {
-  const r = await fetch(`/api${path}`);
+  const r = await fetch(`/api${withRepo(path)}`);
   if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
   return r.json();
 }
@@ -89,6 +96,7 @@ async function act<T>(path: string, body: unknown): Promise<T> {
 export const api = {
   state: () => get<State>("/state"),
   approval: (id: number) => get<Approval>(`/approvals/${id}`),
+  records: () => get<string[]>("/records"),
   history: (path: string) => get<HistoryEntry[]>(`/history?path=${encodeURIComponent(path)}`),
   record: (path: string, ref = "main") => get<{ path: string; after: string | null; before?: string | null }>(`/record?path=${encodeURIComponent(path)}&ref=${ref}`),
   resolve: (id: number, action: "approve" | "ours" | "theirs" | "edit", text?: string) => act<Approval>(`/approvals/${id}`, { action, text }),

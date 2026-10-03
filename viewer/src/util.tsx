@@ -15,6 +15,9 @@ export function colourOf(agent: string): string {
 }
 
 export function navigate(to: string) {
+  // Keep watching the same repo across pages.
+  const repo = new URLSearchParams(location.search).get("repo");
+  if (repo && !/[?&]repo=/.test(to)) to += `${to.includes("?") ? "&" : "?"}repo=${encodeURIComponent(repo)}`;
   history.pushState(null, "", to);
   dispatchEvent(new PopStateEvent("popstate"));
 }

@@ -64,33 +64,53 @@ One envelope becomes one commit on the agent's fork, with trailers (`Agent:`, `S
 
 ## Run it
 
-You need a Cloudflare account on the Workers Paid plan with Artifacts enabled.
+You need Node (tested on 26) and a Cloudflare account on the Workers Paid plan with [Artifacts](https://developers.cloudflare.com/artifacts/get-started/) available (open beta). The Worker also binds Workers AI and two Durable Objects; deploying creates them.
 
-First make it yours: in `wrangler.jsonc`, change `name` (the Worker), the Artifacts `namespace`, and `REPO` (the repo the viewer shows). Deploying with someone else's name would replace their Worker if you share an account.
+**1. Make it yours.** In `wrangler.jsonc`, change `name` (the Worker), the Artifacts `namespace` (created the first time a repo is made in it) and `REPO` (the repo the viewer shows). Deploying with someone else's name would replace their Worker if you share an account.
+
+**2. Install and deploy.**
 
 ```sh
-npm install
-npx wrangler login            # or CLOUDFLARE_API_TOKEN with Workers Scripts Edit and Artifacts Edit
-npx wrangler secret put SPIKE_KEY   # admin key for the scenario routes
-npx wrangler secret put ACT_KEY     # lets a holder approve and undo until Cloudflare Access is in front
-npm run deploy
+npm install                 # npm 11 may warn that postinstall scripts are not approved; the build does not need them
+npx wrangler login          # or set CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID (see below)
+npm run deploy              # prints your URL: https://<name>.<your-subdomain>.workers.dev
 ```
 
-Then play the story (five agents, one approval, an undo, a plain-git agent). Unattended, on a throwaway repo (the runner plays the person too):
+**3. Set the two keys.** `SPIKE_KEY` runs the scenario; `ACT_KEY` lets whoever holds it approve and undo until Cloudflare Access is in front. Keep them in your shell:
 
 ```sh
-curl -X POST -H "Authorization: Bearer $SPIKE_KEY" "https://<your-worker>/spike/scenario?repo=scene-1"
+SPIKE_KEY=$(openssl rand -hex 24); printf %s "$SPIKE_KEY" | npx wrangler secret put SPIKE_KEY
+ACT_KEY=$(openssl rand -hex 24);   printf %s "$ACT_KEY"   | npx wrangler secret put ACT_KEY
+URL=https://<name>.<your-subdomain>.workers.dev
 ```
 
-To play the person yourself, run it on the repo the viewer shows (`REPO` in `wrangler.jsonc`, here `harbourne`) in interactive mode. It deletes and rebuilds that repo, so it asks you to name it twice:
+**4. Play the story** (five agents, one approval, an undo and its undo, a plain-git agent). Unattended, on a throwaway repo, the runner plays the person too. It takes about two minutes and prints one JSON object at the end; success is `"pass": true` with every entry in `checks` true.
 
 ```sh
-curl -X POST -H "Authorization: Bearer $SPIKE_KEY" "https://<your-worker>/spike/scenario?repo=harbourne&rebuild=harbourne&mode=interactive"
+curl -X POST -H "Authorization: Bearer $SPIKE_KEY" "$URL/spike/scenario?repo=scene-1"
+```
+
+Watch it at `$URL/?repo=scene-1` (the viewer shows `REPO` unless the link names another).
+
+To play the person yourself, run it on `REPO` in interactive mode. It deletes and rebuilds that repo, so it asks you to name it twice:
+
+```sh
+curl -X POST -H "Authorization: Bearer $SPIKE_KEY" "$URL/spike/scenario?repo=harbourne&rebuild=harbourne&mode=interactive"
 ```
 
 ![The viewer: main runs down the page, each agent's lane braids back into it](docs/viewer.png)
 
-While it runs, open `https://<your-worker>/` and approve, undo and undo the undo when it waits on you. To act from a phone before Cloudflare Access is set up, open `https://<your-worker>/#key=<ACT_KEY>` once on that phone.
+While it runs, open `$URL/` and approve, undo and undo the undo when it waits on you. To act from a phone, open `$URL/#key=<ACT_KEY>` once on that phone.
+
+**API token, if you use one instead of `wrangler login`:** Workers Scripts Edit, Artifacts Edit, and Workers KV Storage Read (only `wrangler delete` needs it; without it the delete succeeds and then prints an authentication error).
+
+**Clean up.** Each run leaves its repo plus one fork per agent (eight in all):
+
+```sh
+npx wrangler artifacts repos list --namespace <namespace>
+npx wrangler artifacts repos delete <repo> --namespace <namespace> --force   # for each
+npx wrangler delete <name>
+```
 
 `npm test` runs the merge table and the merge path against real git repos on a local `git http-backend`, no mocks.
 

@@ -60,6 +60,19 @@ export type MainCommit = {
 };
 
 const repoOf = (env: ApiEnv) => env.REPO ?? "memory";
+/** Reads may look at any repo in the namespace (?repo=); acting is only ever on REPO. */
+const readRepo = (env: ApiEnv, q: string | undefined) => (q && /^[a-z0-9][a-z0-9-]{0,40}$/.test(q) ? q : repoOf(env));
+
+/** The repo handle, or null when it does not exist (yet). */
+async function open(env: ApiEnv, repo: string): Promise<ArtifactsRepo | null> {
+  try {
+    const r = await env.ARTIFACTS.get(repo);
+    await r.info();
+    return r;
+  } catch {
+    return null;
+  }
+}
 const personOf = (env: ApiEnv) => env.PERSON_AGENT ?? "person";
 const mergeAgent = (env: ApiEnv) => env.MERGE_AGENT.get(env.MERGE_AGENT.idFromName(repoOf(env)));
 
@@ -73,26 +86,30 @@ export const api = new Hono<{ Bindings: ApiEnv; Variables: { actor: string } }>(
 
 api.get("/state", async (c) => {
   const env = c.env;
-  using r = await env.ARTIFACTS.get(repoOf(env));
+  const repo = readRepo(env, c.req.query("repo"));
+  const handle = await open(env, repo);
+  if (!handle) return c.json({ repo, missing: true, main: [], lanes: [], approvals: [] });
+  using r = handle;
   const log = await r.log({ ref: "main", limit: Number(c.req.query("limit") ?? 60) });
   const main: MainCommit[] = log.map((x) => {
     const { subject, trailers: t } = parseMessage(x.message);
     return { hash: x.hash, parents: x.parents, subject, agent: t.agent, source: t.source, resolution: t.resolution, approvedBy: t.approvedBy, reverts: t.reverts, laneCommit: t.laneCommit, paths: t.recordPaths.map((p) => p.path), at: x.committedAt };
   });
-  const ma = mergeAgent(env);
-  const [status, open] = await Promise.all([ma.status(), ma.approvals("open")]);
-  return c.json({ repo: repoOf(env), main, lanes: status.lanes, approvals: open.map((a) => ({ id: a.id, agent: a.agent, path: a.path, createdAt: a.createdAt, hasProposal: !!a.proposal })) });
+  const ma = env.MERGE_AGENT.get(env.MERGE_AGENT.idFromName(repo));
+  const [status, waiting] = await Promise.all([ma.status(), ma.approvals("open")]);
+  return c.json({ repo, main, lanes: status.lanes, approvals: waiting.map((a) => ({ id: a.id, agent: a.agent, path: a.path, createdAt: a.createdAt, hasProposal: !!a.proposal })) });
 });
 
 api.get("/approvals/:id", async (c) => {
-  const a = await mergeAgent(c.env).approval(Number(c.req.param("id")));
+  const repo = readRepo(c.env, c.req.query("repo"));
+  const a = await c.env.MERGE_AGENT.get(c.env.MERGE_AGENT.idFromName(repo)).approval(Number(c.req.param("id")));
   return a ? c.json(a) : c.notFound();
 });
 
 api.get("/history", async (c) => {
   const path = c.req.query("path");
   if (!path) return c.json({ error: "path is required" }, 400);
-  return c.json(await history(c.env.ARTIFACTS, repoOf(c.env), path, 1000));
+  return c.json(await history(c.env.ARTIFACTS, readRepo(c.env, c.req.query("repo")), path, 1000));
 });
 
 /** A record as it stood after `ref` (default main), and before it when `ref` is a commit. */
@@ -100,7 +117,7 @@ api.get("/record", async (c) => {
   const path = c.req.query("path");
   if (!path) return c.json({ error: "path is required" }, 400);
   const ref = c.req.query("ref") ?? "main";
-  using r = await c.env.ARTIFACTS.get(repoOf(c.env));
+  using r = await c.env.ARTIFACTS.get(readRepo(c.env, c.req.query("repo")));
   const after = await textOf(r, ref, path);
   let before: string | null | undefined;
   if (ref !== "main") {
@@ -112,7 +129,9 @@ api.get("/record", async (c) => {
 
 /** Every record path on main. */
 api.get("/records", async (c) => {
-  using r = await c.env.ARTIFACTS.get(repoOf(c.env));
+  const handle = await open(c.env, readRepo(c.env, c.req.query("repo")));
+  if (!handle) return c.json([]);
+  using r = handle;
   const head = (await r.log({ ref: "main", limit: 1 }))[0];
   if (!head) return c.json([]);
   const out: string[] = [];

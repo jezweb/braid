@@ -18,6 +18,7 @@ export function Live() {
   }, []);
 
   if (!state) return <div className="page"><p className="note">{error ?? "Loading"}</p></div>;
+  if (state.missing) return <div className="page"><header className="top"><h1>{state.repo}</h1></header><p className="note">Not here yet. It appears when a run starts writing.</p></div>;
   const merges = state.main.filter((c) => c.laneCommit);
   const agents = new Set(merges.map((c) => c.agent).filter(Boolean));
   const waiting = state.approvals[0];
@@ -175,7 +176,7 @@ export type { Layout };
 function Records() {
   const [paths, setPaths] = useState<string[]>([]);
   const [open, setOpen] = useState<string | null>(null);
-  useEffect(() => { fetch("/api/records").then((r) => r.json()).then(setPaths).catch(() => setPaths([])); }, []);
+  useEffect(() => { api.records().then(setPaths).catch(() => setPaths([])); }, []);
   if (!paths.length) return null;
   const folders = new Map<string, string[]>();
   for (const p of paths) {
