@@ -128,6 +128,8 @@ npx wrangler delete <name>      # without KV read on the token, this deletes and
 
 [GitOrange](https://github.com/choyiny/gitorange) is a self-hosted GitHub on the same platform: people push branches, open pull requests and press merge, and a conflict goes back to a developer's checkout. braid is not a code host. Many agents write at once, a merge agent folds their forks into `main` continuously and line by line, and only a real conflict reaches a person, as one approval on a phone. They fit together: braid's `main` is an ordinary Artifacts repo that GitOrange could browse.
 
+Cloudflare's [Agent Memory](https://developers.cloudflare.com/agent-memory/) (private beta) is recall memory: a model extracts facts from conversations and finds them again by search, and a newer fact on the same topic replaces the older one. braid is for shared records that many agents edit at once, where two edits to the same lines should reach a person rather than the last writer winning. An agent can use both: recall with Agent Memory, write the record of truth to braid.
+
 ## Not here
 
 Pull requests, issues, CI, multi-tenant hosting, binary files. Scale beyond what is measured above is not claimed.
