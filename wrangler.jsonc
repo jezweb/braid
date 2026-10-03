@@ -13,5 +13,6 @@
     ]
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Lane", "MergeAgent"] }],
+  "ai": { "binding": "AI" },
   "artifacts": [{ "binding": "ARTIFACTS", "namespace": "braid-demo", "remote": true }]
 }

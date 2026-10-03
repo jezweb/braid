@@ -6,9 +6,24 @@ import { formatMessage, laneTrailers, type Resolution } from "./contract";
 import { mergeRecord, type Conflict } from "./merge";
 import { NotTextError, PathCollisionError, PushRejectedError, Store, type Remote } from "./git/store";
 
+/** One conflicted path, with everything a person (or a model) needs to resolve it. */
+export type PathConflict = {
+  path: string;
+  conflicts: Conflict[];
+  base: string | null; // blob the writer edited from
+  ours: string | null; // main's blob when the conflict was found: an approval applies only while main still holds it
+  theirs: string | null; // the writer's blob
+  baseText: string | null;
+  oursText: string | null;
+  theirsText: string | null;
+};
+
+/** A person's (or an approved proposal's) answer for one path of one lane commit. */
+export type Override = { ours: string | null; content: string | null; resolution: "llm" | "human"; approvedBy: string };
+
 export type LaneOutcome =
   | { status: "merged"; laneCommit: string; mergeCommit: string; resolution: Resolution }
-  | { status: "conflict"; laneCommit: string; conflicts: { path: string; conflicts: Conflict[] }[] }
+  | { status: "conflict"; laneCommit: string; conflicts: PathConflict[] }
   | { status: "invalid"; laneCommit: string; errors: string[] };
 
 export type MergeLaneResult = {
@@ -16,6 +31,8 @@ export type MergeLaneResult = {
   mainAfter: string;
   /** In lane order. Stops at the first commit that is not merged. */
   outcomes: LaneOutcome[];
+  /** Lane commits skipped because main already names them, oldest first. */
+  skipped: string[];
   storeBytes: number;
   ms: number;
 };
@@ -31,27 +48,38 @@ export type MergeLaneOptions = {
   /** Text of a blob main once held. Default: from the store, deepening canonical once if absent. */
   readBase?: (oid: string) => Promise<string>;
   author?: { name: string; email: string };
+  /** Approved answers by lane commit and path. Applied only while main still holds the override's `ours`. */
+  overrides?: (laneCommit: string, path: string) => Override | undefined;
+  /** Lane commits main already names (Lane-Commit:): never folded twice. */
+  onMain?: Set<string>;
 };
 
 export async function mergeLane(canonical: Remote, lane: Remote, opts: MergeLaneOptions): Promise<MergeLaneResult> {
   const t0 = Date.now();
   const store = await Store.open();
   const mainBefore = await store.fetch(canonical, "main", 1);
-  const tip = await store.fetch(lane, opts.laneRef ?? "main", opts.depth ?? 50);
-  if (!mainBefore || !tip) throw new Error(`missing tip: main=${mainBefore} lane=${tip}`);
+  if (!mainBefore) throw new Error("canonical has no main");
   let mainNow = mainBefore;
 
-  // Lane commits after `since`, oldest first, along the first-parent chain.
-  // Each one's parent must be in the store: it is what the commit is diffed against.
-  const pending: string[] = [];
-  for (let oid = tip; oid !== opts.since; ) {
-    pending.unshift(oid);
-    const parent = (await store.readCommit(oid)).parents[0];
-    if (!parent || !(await store.has(parent))) {
-      throw new Error(`lane history does not reach ${opts.since} within depth ${opts.depth ?? 50}`);
+  // Lane commits after `since`, oldest first, along the first-parent chain. Each one's parent must
+  // be in the store (it is what the commit is diffed against), so deepen until `since` is reached.
+  let pending: string[] = [];
+  for (const depth of opts.depth ? [opts.depth] : [50, 1000, 20000]) {
+    const tip = await store.fetch(lane, opts.laneRef ?? "main", depth);
+    if (!tip) throw new Error("lane has no main");
+    pending = [];
+    let oid: string | undefined = tip;
+    while (oid && oid !== opts.since && (await store.has(oid))) {
+      pending.unshift(oid);
+      oid = (await store.readCommit(oid)).parents[0];
     }
-    oid = parent;
+    if (oid === opts.since && (await store.has(oid))) break; // the oldest pending commit is diffed against it
+    if (depth === (opts.depth ?? 20000)) throw new Error(`lane history does not reach ${opts.since} within depth ${depth}`);
   }
+
+  // A commit main already names was merged by an earlier run whose bookkeeping was lost.
+  const skipped: string[] = [];
+  while (pending.length && opts.onMain?.has(pending[0])) skipped.push(pending.shift()!);
 
   let deepened = false;
   const readBase = opts.readBase ?? (async (oid: string) => {
@@ -67,7 +95,7 @@ export async function mergeLane(canonical: Remote, lane: Remote, opts: MergeLane
     outcomes = [];
     head = mainNow;
     for (const laneCommit of pending) {
-      const outcome = await foldOne(store, head, laneCommit, readBase, opts.author);
+      const outcome = await foldOne(store, head, laneCommit, readBase, opts.author, opts.overrides);
       outcomes.push(outcome);
       if (outcome.status !== "merged") break;
       head = outcome.mergeCommit;
@@ -85,7 +113,7 @@ export async function mergeLane(canonical: Remote, lane: Remote, opts: MergeLane
       if (attempt >= (opts.attempts ?? 3)) throw e;
     }
   }
-  return { mainBefore, mainAfter: head, outcomes, storeBytes: store.fs.bytes(), ms: Date.now() - t0 };
+  return { mainBefore, mainAfter: head, outcomes, skipped, storeBytes: store.fs.bytes(), ms: Date.now() - t0 };
 }
 
 async function foldOne(
@@ -94,6 +122,7 @@ async function foldOne(
   laneCommit: string,
   readBase: (oid: string) => Promise<string>,
   author = { name: "braid-merge", email: "merge@braid.invalid" },
+  overrides?: MergeLaneOptions["overrides"],
 ): Promise<LaneOutcome> {
   const c = await store.readCommit(laneCommit);
   const t = laneTrailers(c.message);
@@ -108,13 +137,21 @@ async function foldOne(
   if (undeclared.length) return { status: "invalid", laneCommit, errors: undeclared.map((p) => `changed but not declared: ${p}`) };
 
   const edits = new Map<string, string | null>();
-  const conflicts: { path: string; conflicts: Conflict[] }[] = [];
+  const conflicts: PathConflict[] = [];
   let resolution: Resolution = "clean";
+  const approvers = new Set<string>();
   try {
     for (const rp of trailers.recordPaths) {
       const mainBlob = await store.blobAt(head, rp.path);
       const laneBlob = await store.blobAt(laneCommit, rp.path);
       if (laneBlob === rp.base) continue; // the writer left it as read: main's stands
+      const o = overrides?.(laneCommit, rp.path);
+      if (o && o.ours === mainBlob) {
+        edits.set(rp.path, o.content === null ? null : await store.writeText(o.content));
+        resolution = resolution === "human" || o.resolution === "human" ? "human" : "llm";
+        approvers.add(o.approvedBy);
+        continue;
+      }
       if (mainBlob === rp.base) { edits.set(rp.path, laneBlob); continue; } // main untouched since the writer read it
       if (mainBlob === laneBlob) continue; // already there
       let baseText: string | null = null;
@@ -127,8 +164,11 @@ async function foldOne(
         ours: mainBlob === null ? null : await store.readText(mainBlob),
         theirs: laneBlob === null ? null : await store.readText(laneBlob),
       });
-      if (r.status === "conflict") { conflicts.push({ path: rp.path, conflicts: r.conflicts }); continue; }
-      if (r.resolution === "field") resolution = "field";
+      if (r.status === "conflict") {
+        conflicts.push({ path: rp.path, conflicts: r.conflicts, base: rp.base, ours: mainBlob, theirs: laneBlob, baseText, oursText: r.ours, theirsText: r.theirs });
+        continue;
+      }
+      if (r.resolution === "field" && resolution === "clean") resolution = "field";
       edits.set(rp.path, r.content === null ? null : await store.writeText(r.content));
     }
     if (conflicts.length) return { status: "conflict", laneCommit, conflicts };
@@ -136,7 +176,7 @@ async function foldOne(
     const mergeCommit = await store.commit({
       tree,
       parents: [head, laneCommit],
-      message: formatMessage(subject, { ...trailers, laneCommit, resolution }),
+      message: formatMessage(subject, { ...trailers, laneCommit, resolution, approvedBy: approvers.size ? [...approvers].join(", ") : undefined }),
       author,
     });
     return { status: "merged", laneCommit, mergeCommit, resolution };

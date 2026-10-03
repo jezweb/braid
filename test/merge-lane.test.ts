@@ -194,4 +194,36 @@ describe("mergeLane: folding lane commits into main", async () => {
     expect(r3.outcomes[0]).toMatchObject({ status: "conflict" });
     expect(show(P)).toContain("Pell and Daughters");
   });
+  it("an approved answer lands with its trailers, only while main still holds what it was approved against", async () => {
+    const ap = lane("approver-test");
+    const theirs = raw(w.bare("memory"), "show", `${seed}:towns/harbourne.md`).replace("A made-up river town.", "A made-up town in a valley.");
+    const lc = ap.write("Valley, not river", [{ path: "towns/harbourne.md", base: seedHarbourne, content: theirs }]);
+    const r1 = await mergeLane(url("memory"), url("memory--approver-test"), { since: ap.forkPoint });
+    expect(r1.outcomes[0].status).toBe("conflict");
+    const conflict = r1.outcomes[0].status === "conflict" ? r1.outcomes[0].conflicts[0] : undefined;
+    expect(conflict?.oursText).toContain("by a river");
+    expect(conflict?.theirsText).toContain("in a valley");
+
+    // Approved against a main blob that is no longer there: refused, still a conflict.
+    const stale = await mergeLane(url("memory"), url("memory--approver-test"), {
+      since: ap.forkPoint,
+      overrides: () => ({ ours: seedHarbourne, content: "stale\n", resolution: "human", approvedBy: "ada@example.invalid" }),
+    });
+    expect(stale.outcomes[0].status).toBe("conflict");
+
+    const resolved = show("towns/harbourne.md").replace("A made-up town by a river.", "A made-up town in a river valley.");
+    const r2 = await mergeLane(url("memory"), url("memory--approver-test"), {
+      since: ap.forkPoint,
+      overrides: (c, p) => (c === lc && p === "towns/harbourne.md" ? { ours: conflict!.ours, content: resolved, resolution: "llm", approvedBy: "ada@example.invalid" } : undefined),
+    });
+    expect(r2.outcomes[0]).toMatchObject({ status: "merged", resolution: "llm" });
+    const t = parseMessage(sh(w.bare("memory"), "log", "-1", "--format=%B", "main")).trailers;
+    expect(t).toMatchObject({ resolution: "llm", approvedBy: "ada@example.invalid", laneCommit: lc });
+    expect(show("towns/harbourne.md")).toBe(resolved);
+
+    // Run again as if the bookkeeping were lost: main names the lane commit, so nothing is folded twice.
+    const again = await mergeLane(url("memory"), url("memory--approver-test"), { since: ap.forkPoint, onMain: new Set([lc]) });
+    expect(again.outcomes).toEqual([]);
+    expect(again.mainAfter).toBe(again.mainBefore);
+  });
 });

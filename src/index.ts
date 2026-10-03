@@ -7,6 +7,8 @@ import { runMergeRace, runRace } from "./spike-race";
 import type { Lane } from "./do/lane";
 import type { MergeAgent } from "./do/merge-agent";
 import { runG1 } from "./g1";
+import { runG2 } from "./g2";
+import { DEFAULT_PROPOSAL_MODEL, proposeSection } from "./propose";
 
 export { Lane } from "./do/lane";
 export { MergeAgent } from "./do/merge-agent";
@@ -17,6 +19,8 @@ type Env = {
   ARTIFACTS: Artifacts;
   LANE: DurableObjectNamespace<Lane>;
   MERGE_AGENT: DurableObjectNamespace<MergeAgent>;
+  AI: Ai;
+  PROPOSAL_MODEL?: string;
 };
 
 const app = new Hono<{ Bindings: Env }>();
@@ -58,6 +62,28 @@ app.post("/spike/g1", async (c) => {
   const key = c.env.SPIKE_KEY;
   if (!key || c.req.header("authorization") !== `Bearer ${key}`) return c.notFound();
   return c.json(await runG1(c.env));
+});
+
+app.post("/spike/g2", async (c) => {
+  const key = c.env.SPIKE_KEY;
+  if (!key || c.req.header("authorization") !== `Bearer ${key}`) return c.notFound();
+  return c.json(await runG2(c.env, c.req.query("keep") === "1", { proposal: c.req.query("proposal") !== "0" }));
+});
+
+app.post("/spike/propose", async (c) => {
+  const key = c.env.SPIKE_KEY;
+  if (!key || c.req.header("authorization") !== `Bearer ${key}`) return c.notFound();
+  const model = c.req.query("model") || c.env.PROPOSAL_MODEL || DEFAULT_PROPOSAL_MODEL;
+  const t0 = Date.now();
+  const sec = { kind: "overlap" as const, section: "## Summary",
+    base: "## Summary\n\nHarbourne is a made-up river town with one bridge and a flour mill.\n\n",
+    ours: "## Summary\n\nHarbourne is a made-up river town with one stone bridge and a working flour mill.\n\n",
+    theirs: "## Summary\n\nHarbourne is a made-up river town with two bridges and an old flour mill.\n\n" };
+  let raw: unknown, error: string | undefined, text: string | undefined;
+  try {
+    text = await proposeSection(c.env.AI, model, sec);
+  } catch (e) { error = String(e); }
+  return c.json({ model, ms: Date.now() - t0, raw, text, error });
 });
 
 export default app;

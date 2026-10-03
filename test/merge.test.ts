@@ -184,3 +184,38 @@ describe("merge table: panel findings (bt, 3 Oct)", () => {
     expect(r.status === "clean" && r.content).toBe("---\na: 2\n\n---\nbody2\n");
   });
 });
+
+describe("merge table: resolver", () => {
+  it("fills an overlapping section from the resolver and leaves the rest of the merge intact", () => {
+    const base = "# T\n\n## A\n\nold a\n\n## B\n\nb\n";
+    const ours = base.replace("old a", "ours a").replace("\nb\n", "\nb2\n");
+    const theirs = base.replace("old a", "theirs a");
+    const r = mergeRecord({ base, ours, theirs }, (c) => (c.section === "## A" ? "## A\n\nboth a\n\n" : undefined));
+    expect(r).toEqual({ status: "clean", resolution: "clean", content: "# T\n\n## A\n\nboth a\n\n## B\n\nb2\n" });
+    expect(mergeRecord({ base, ours, theirs }, () => undefined).status).toBe("conflict");
+  });
+});
+
+describe("side choices touch only the overlapping section", async () => {
+  const { sideRecord } = await import("../src/propose");
+  it("takes the writer's section and keeps main's clean changes elsewhere", () => {
+    const base = "# T\n\n## A\n\nold\n\n## B\n\n555 0100\n";
+    const ours = base.replace("old", "main's").replace("555 0100", "555 0142");
+    const theirs = base.replace("old", "writer's");
+    expect(sideRecord(base, ours, theirs, "theirs")).toBe("# T\n\n## A\n\nwriter's\n\n## B\n\n555 0142\n");
+    expect(sideRecord(base, ours, theirs, "ours")).toBe(ours);
+  });
+});
+
+describe("side choices survive the whole-body fallback (codex G2 repro)", async () => {
+  const { sideRecord } = await import("../src/propose");
+  it("a repeated-heading insertion plus a conflict in ## A does not undo main's phone in ## B", () => {
+    const base = "# T\n\n## A\n\nold\n\n## B\n\nPhone: 555 0100\n";
+    const ours = base.replace("old", "main's").replace("555 0100", "555 0142");
+    const theirs = base.replace("old", "writer's").replace("## B", "## A\n\nanother\n\n## B");
+    const r = sideRecord(base, ours, theirs, "theirs")!;
+    expect(r).toContain("555 0142");
+    expect(r).toContain("writer's");
+    expect(r).toContain("another");
+  });
+});

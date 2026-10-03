@@ -117,7 +117,10 @@ export class Lane extends DurableObject<Env> {
       const remote = await this.ready(repo, e.agent);
       if (e.id) {
         const done = await this.ctx.storage.get<WriteResult>(WRITE + e.id);
-        if (done) return { ...done, repeated: true };
+        if (done) {
+          await this.notifyMerge(repo, e.agent); // the first attempt may have stopped before telling the merger
+          return { ...done, repeated: true };
+        }
       }
       for (let attempt = 1; ; attempt++) {
         const s = this.store!;
@@ -145,9 +148,12 @@ export class Lane extends DurableObject<Env> {
           await this.load(remote);
           if (e.id) {
             const done = await this.ctx.storage.get<WriteResult>(WRITE + e.id);
-            if (done) return done;
+            if (done) { await this.notifyMerge(repo, e.agent); return done; }
           }
-          if (this.tip === laneCommit) return { laneCommit, seq: (await this.ctx.storage.get<number>("seq"))! };
+          if (this.tip === laneCommit) {
+            await this.notifyMerge(repo, e.agent);
+            return { laneCommit, seq: (await this.ctx.storage.get<number>("seq"))! };
+          }
           if (err instanceof PushRejectedError && attempt < 2) continue;
           throw err;
         }
@@ -159,19 +165,40 @@ export class Lane extends DurableObject<Env> {
         try {
           await putAll(this.ctx.storage, entries, { seq, lastCommit: laneCommit });
         } catch (err) {
-          // The commit landed but is not recorded: drop the cache so the next call replays it.
+          // The commit landed but is not recorded: drop the cache so the next call replays it, and
+          // still queue the merge (the merger reads the lane, not our bookkeeping).
           this.store = undefined;
+          await this.notifyMerge(repo, e.agent);
           throw err;
         }
         this.tip = laneCommit;
         await this.clearIfMerged(laneCommit);
+        await this.notifyMerge(repo, e.agent);
         return result;
       }
     });
   }
 
+  /** Queue a merge of this lane. If the merger cannot be reached, keep it owed and retry from our alarm. */
+  private async notifyMerge(repo: string, agent: string) {
+    try {
+      await this.env.MERGE_AGENT.get(this.env.MERGE_AGENT.idFromName(repo)).notify(repo, agent);
+      await this.ctx.storage.delete("notifyOwed");
+    } catch (err) {
+      console.error(JSON.stringify({ event: "notify_failed", repo, agent, error: String(err) }));
+      const tries = ((await this.ctx.storage.get<{ tries: number }>("notifyOwed"))?.tries ?? 0) + 1;
+      await this.ctx.storage.put("notifyOwed", { repo, agent, tries });
+      await this.ctx.storage.setAlarm(Date.now() + Math.min(5000 * 2 ** tries, 600_000));
+    }
+  }
+
+  async alarm(): Promise<void> {
+    const owed = await this.ctx.storage.get<{ repo: string; agent: string }>("notifyOwed");
+    if (owed) await this.notifyMerge(owed.repo, owed.agent);
+  }
+
   /** The agent's view: its own unmerged write of `path` if any, else main. */
-  read(repo: string, agent: string, path: string): Promise<MainRead & { pending: boolean }> {
+  read(repo: string, agent: string, path: string): Promise<MainRead & { pending: boolean; approval?: { id: number; laneCommit: string } }> {
     // Behind the write queue, so a read always sees every write sent before it.
     return this.serial(async () => {
       await this.ready(repo, agent);
@@ -179,7 +206,11 @@ export class Lane extends DurableObject<Env> {
       const main = await readMain(this.env.ARTIFACTS, repo, path);
       // Main already holds exactly what we wrote: the merge landed even if its ack never reached us.
       if (p && main.base === p.blob) await this.ctx.storage.delete(PENDING + path);
-      else if (p) return { content: p.content, base: p.blob, pending: true };
+      else if (p) {
+        // Waiting on a person? Say so: the agent should not build on text that may not land as written.
+        const approval = await this.env.MERGE_AGENT.get(this.env.MERGE_AGENT.idFromName(repo)).approvalFor(agent, path);
+        return { content: p.content, base: p.blob, pending: true, ...(approval ? { approval } : {}) };
+      }
       return { ...main, pending: false };
     });
   }

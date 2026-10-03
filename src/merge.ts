@@ -32,7 +32,10 @@ export type MergeResult =
 
 const LAST_EDITED = ["last_edited_at", "last_edited_by", "last_change_summary"];
 
-export function mergeRecord({ base, ours, theirs }: MergeInput): MergeResult {
+/** Supplies text for an overlapping section (an approved or proposed resolution); undefined leaves the conflict. */
+export type OverlapResolver = (c: Extract<Conflict, { kind: "overlap" }>) => string | undefined;
+
+export function mergeRecord({ base, ours, theirs }: MergeInput, resolve?: OverlapResolver): MergeResult {
   if (ours === base) return { status: "clean", content: theirs, resolution: "clean" };
   if (theirs === base || theirs === ours) return { status: "clean", content: ours, resolution: "clean" };
   const conflict = (conflicts: Conflict[]): MergeResult => ({ status: "conflict", conflicts, base, ours, theirs });
@@ -50,8 +53,8 @@ export function mergeRecord({ base, ours, theirs }: MergeInput): MergeResult {
   // Repeated headings are keyed by occurrence, which a new same-named heading would shift.
   // When any repeated heading's count differs between sides, merge the body as one text.
   const body = repeatedHeadingsShift(b.sections, o.sections, t.sections)
-    ? wholeBody(b.sections, o.sections, t.sections)
-    : threeWay(b.sections, o.sections, t.sections, mergeSection, (key) => ({
+    ? wholeBody(b.sections, o.sections, t.sections, resolve)
+    : threeWay(b.sections, o.sections, t.sections, (k, bv, ov, tv) => withResolver(mergeSection(k, bv, ov, tv), resolve), (key) => ({
         kind: "delete",
         detail: `section ${partName(key)} was removed on one side and edited on the other`,
       }));
@@ -187,10 +190,26 @@ function repeatedHeadingsShift(...sides: Part[][]): boolean {
   return false;
 }
 
-function wholeBody(b: Part[], o: Part[], t: Part[]): Merged {
+function withResolver(r: string | Conflict, resolve?: OverlapResolver): string | Conflict {
+  if (typeof r === "string" || r.kind !== "overlap" || !resolve) return r;
+  return resolve(r) ?? r;
+}
+
+function wholeBody(b: Part[], o: Part[], t: Part[], resolve?: OverlapResolver): Merged {
   const text = (ps: Part[]) => ps.map((p) => p.text).join("");
-  const r = mergeSection("(body)#0", text(b), text(o), text(t));
+  const r = withResolver(mergeSection("(body)#0", text(b), text(o), text(t)), resolve);
   return typeof r === "string" ? { value: [{ key: "#0", text: r }], conflicts: [] } : { value: [], conflicts: [r] };
+}
+
+/**
+ * Three-way merge of one text that resolves each conflicting line region from one side and keeps
+ * every region that merged cleanly. A side choice therefore never undoes a clean change elsewhere.
+ */
+export function pickSide(base: string, ours: string, theirs: string, side: "ours" | "theirs"): string {
+  const lines = (s: string) => s.split(/(?<=\n)/);
+  return diff3Merge(lines(ours), lines(base), lines(theirs))
+    .flatMap((r) => r.ok ?? (side === "ours" ? r.conflict!.a : r.conflict!.b))
+    .join("");
 }
 
 function mergeSection(key: string, bv: string | undefined, ov: string, tv: string): string | Conflict {

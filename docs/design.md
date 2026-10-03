@@ -46,6 +46,17 @@ Per path, from the base blob, `main`'s blob now and the writer's content (`src/m
 
 `mergeLane` starts from `since`, the last lane commit already merged (at first, the commit the fork started from), and walks the lane's first-parent chain. Merging only the tip would be wrong twice: a re-run would resurrect a record `main` deleted since, and a tip whose parent is unmerged cannot be pushed (its parent is missing on `main`).
 
+## G2: the merge queue and approvals
+
+**Approval record** (the shared piece, in the MergeAgent's SQLite): one row per conflicted path of a lane commit, `{id, agent, laneCommit, path, base, ours, theirs, conflicts, proposal, status, resolution, content, approvedBy}`. `ours` is main's blob when the conflict was found. The LLM proposal and the person's tap write it; `mergeLane`, `Lane.read` and the viewer read it.
+
+- **A conflict holds its lane.** The lane commit stays unmerged until every conflicted path in it is resolved, so one envelope stays one merge commit on main. The agent's later writes queue behind it on its lane, and `Lane.read` reports the open approval for that path. (The alternative, merging the clean paths now and the conflicted one later, splits an envelope across two main commits and makes the agent's later edits to that path unmergeable. Revisit for a memory where an agent can wait hours for a person.)
+- **Resolution is compare-and-swapped.** An approved row applies only while main still holds its `ours` blob. If main moved, the row is superseded and the path is merged again, which may resolve cleanly or open a fresh approval.
+- **Choices:** approve the proposal (`Resolution: llm`), keep main's (`human`), take the writer's (`human`), or edit (`human`). Each lands with `Approved-By:`.
+- **`since` per lane** lives in the MergeAgent's storage and is derived from main's `Lane-Commit:` trailers when storage lacks it. A lane commit main already names is never folded twice.
+- **Known limits (demo scale):** the guard against folding a commit twice after lost bookkeeping reads the newest 1,000 main commits; a lane may run at most 20,000 commits ahead of `since`.
+- **The queue** is the MergeAgent's alarm: a Lane's write marks its lane dirty; the alarm drains dirty lanes one at a time (one merger per repo, so its pushes race only other repos' traffic, never each other).
+
 ## Proof gates
 
 | Gate | Yes when |
