@@ -190,8 +190,11 @@ export class MergeAgent extends DurableObject<Env> {
   async alarm(): Promise<void> {
     try {
       const until = (await this.ctx.storage.get<number>("sweepUntil")) ?? 0;
-      if (until > Date.now()) await this.sweep((await this.ctx.storage.get<string>("repo"))!);
-      await this.serial(() => this.drain());
+      // Sweep and drain in one turn of the serial chain: a sweep's dirty update can never interleave with a fold's.
+      await this.serial(async () => {
+        if (until > Date.now()) await this.sweep((await this.ctx.storage.get<string>("repo"))!);
+        await this.drain();
+      });
       if (until > Date.now() && (await this.ctx.storage.getAlarm()) === null) await this.ctx.storage.setAlarm(Date.now() + 5000);
       await this.ctx.storage.delete("alarmRetries");
     } catch (err) {

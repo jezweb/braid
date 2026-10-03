@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { api, type Approval, type HistoryEntry } from "./api";
-import { ago, Changed, colourOf, Doc, navigate, titleOf } from "./util";
+import { ago, Changed, colourOf, Doc, navigate, titleOf, watchingOther } from "./util";
 
 type Entry = HistoryEntry & { before: string | null; after: string | null };
 
@@ -65,7 +65,7 @@ export function Record({ path, after }: { path: string; after?: number }) {
             <div>
               <div className="row">
                 <span><span className="who">{e.agent ?? "seed"}</span> · {e.subject}</span>
-                <button className="link" disabled={!!busy} onClick={() => undo(e.commit)}>{busy === e.commit ? "Undoing" : "Undo"}</button>
+                {!watchingOther() && <button className="link" disabled={!!busy} onClick={() => undo(e.commit)}>{busy === e.commit ? "Undoing" : "Undo"}</button>}
               </div>
               <div className="when">
                 {ago(e.at)}{e.approvedBy && <> · <span className="tag">approved by {e.approvedBy}</span></>}{e.reverts && <> · undoes {e.reverts.slice(0, 7)}</>}

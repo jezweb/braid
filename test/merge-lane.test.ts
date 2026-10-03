@@ -260,4 +260,23 @@ describe("mergeLane: folding lane commits into main", async () => {
     expect(r.outcomes[0].status).toBe("invalid");
     expect(main()).toBe(before);
   });
+  it("panel findings: forged Agent, parentless and empty plain commits", async () => {
+    // A lane commit naming another agent is refused, even with valid trailers.
+    const fo = lane("forger");
+    const before = main();
+    fo.write("x", [{ path: "notes/forged.md", base: null, content: "x\n" }], laneMessage({ agent: "victim", reason: "forged", changes: [{ path: "notes/forged.md", base: null, content: "x" }] }));
+    const r1 = await mergeLane(url("memory"), url("memory--forger"), { since: fo.forkPoint, agent: "forger" });
+    expect(r1.outcomes[0]).toMatchObject({ status: "invalid", errors: ["Agent: victim on forger's lane"] });
+    expect(main()).toBe(before);
+
+    // An empty plain commit folds as a no-op merge, and the lane's next commit still merges.
+    const em = lane("empty-commit");
+    sh(em.dir, "commit", "-q", "--allow-empty", "-m", "checkpoint");
+    sh(em.dir, "push", "-q", "origin", "HEAD:main");
+    em.write("after the checkpoint", [{ path: "notes/after-checkpoint.md", base: null, content: "y\n" }], "after the checkpoint");
+    const r2 = await mergeLane(url("memory"), url("memory--empty-commit"), { since: em.forkPoint, agent: "empty-commit" });
+    expect(r2.outcomes.map((o) => o.status)).toEqual(["merged", "merged"]);
+    expect(show("notes/after-checkpoint.md")).toBe("y\n");
+    fsck();
+  });
 });

@@ -31,9 +31,18 @@ async function accessEmail(env: ApiEnv, jwt: string | undefined): Promise<string
   if (!env.ACCESS_TEAM || !env.ACCESS_AUD || !jwt) return undefined;
   const [h, p, sig] = jwt.split(".");
   if (!h || !p || !sig) return undefined;
-  const dec = (x: string) => Uint8Array.from(atob(x.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
-  const header = JSON.parse(new TextDecoder().decode(dec(h))) as { kid?: string; alg?: string };
-  const payload = JSON.parse(new TextDecoder().decode(dec(p))) as { aud?: string | string[]; email?: string; exp?: number; iss?: string };
+  // JWT segments are base64url without padding; atob wants standard base64 padded to a multiple of 4.
+  const dec = (x: string) => {
+    const b = x.replace(/-/g, "+").replace(/_/g, "/");
+    return Uint8Array.from(atob(b + "=".repeat((4 - (b.length % 4)) % 4)), (c) => c.charCodeAt(0));
+  };
+  let header: { kid?: string; alg?: string }, payload: { aud?: string | string[]; email?: string; exp?: number; iss?: string };
+  try {
+    header = JSON.parse(new TextDecoder().decode(dec(h)));
+    payload = JSON.parse(new TextDecoder().decode(dec(p)));
+  } catch {
+    return undefined;
+  }
   if (header.alg !== "RS256") return undefined;
   const auds = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
   if (!auds.includes(env.ACCESS_AUD) || (payload.exp ?? 0) * 1000 < Date.now() || payload.iss !== env.ACCESS_TEAM) return undefined;
@@ -97,7 +106,7 @@ api.get("/state", async (c) => {
   });
   const ma = env.MERGE_AGENT.get(env.MERGE_AGENT.idFromName(repo));
   const [status, waiting] = await Promise.all([ma.status(), ma.approvals("open")]);
-  return c.json({ repo, main, lanes: status.lanes, approvals: waiting.map((a) => ({ id: a.id, agent: a.agent, path: a.path, createdAt: a.createdAt, hasProposal: !!a.proposal })) });
+  return c.json({ repo, actOn: repoOf(env), main, lanes: status.lanes, approvals: waiting.map((a) => ({ id: a.id, agent: a.agent, path: a.path, createdAt: a.createdAt, hasProposal: !!a.proposal })) });
 });
 
 api.get("/approvals/:id", async (c) => {
@@ -154,6 +163,9 @@ api.use("/act/*", async (c, next) => {
   const demo = !!c.env.DEMO_ACTOR && !!c.env.ACT_KEY && c.req.header("x-demo-key") === c.env.ACT_KEY;
   const actor = verified ?? (demo ? `${c.env.DEMO_ACTOR} (demo)` : undefined);
   if (!actor) return c.json({ error: "sign in to act" }, 401);
+  // Acting is only ever on REPO. A viewer watching another repo must not resolve REPO's approval with the same id.
+  const named = c.req.query("repo");
+  if (named !== repoOf(c.env)) return c.json({ error: `actions apply to ${repoOf(c.env)} only` }, 409);
   c.set("actor", actor);
   await next();
 });

@@ -96,3 +96,6 @@ export function Doc({ text }: { text: string }) {
 export function Marked({ from, to }: { from: string; to: string }) {
   return <>{diffWords(from, to).filter((p) => !p.removed).map((p, i) => (p.added ? <mark key={i}>{p.value}</mark> : <span key={i}>{p.value}</span>))}</>;
 }
+
+/** Watching another repo via ?repo= is look-only: actions always apply to the Worker's own repo. */
+export const watchingOther = () => !!new URLSearchParams(location.search).get("repo");

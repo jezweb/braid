@@ -28,7 +28,7 @@ export function Live() {
         <h1>{state.repo}</h1>
         <span className="line">{agents.size} agents · {merges.length} changes</span>
       </header>
-      {waiting && (
+      {waiting && state.repo === state.actOn && (
         <div className="waiting" role="status">
           <strong>{waiting.agent} waits on you</strong>
           <a className="go" href={`/approve/${waiting.id}`} onClick={(e) => { e.preventDefault(); navigate(`/approve/${waiting.id}`); }}>Review</a>

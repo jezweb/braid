@@ -132,8 +132,13 @@ async function foldOne(
   agent?: string,
 ): Promise<LaneOutcome> {
   const c = await store.readCommit(laneCommit);
+  if (!c.parents[0]) return { status: "invalid", laneCommit, errors: ["lane commit has no parent"] };
   let parsed = parseMessage(c.message);
   if (parsed.errors.length) return { status: "invalid", laneCommit, errors: parsed.errors };
+  // A lane writes as its own agent: a trailer naming anyone else is refused, never believed.
+  if (agent && parsed.trailers.agent && parsed.trailers.agent !== agent) {
+    return { status: "invalid", laneCommit, errors: [`Agent: ${parsed.trailers.agent} on ${agent}'s lane`] };
+  }
   // Bare means no braid trailer of any kind; a partial set (a lone Resolution:, Reverts:, Source:) is refused below.
   const { recordPaths, ...rest } = parsed.trailers;
   const bare = recordPaths.length === 0 && Object.values(rest).every((v) => v === undefined);
@@ -142,6 +147,16 @@ async function foldOne(
     const parentTree = (await store.readCommit(c.parents[0])).tree;
     const paths = await store.changedPaths(parentTree, c.tree);
     const recordPaths = await Promise.all(paths.map(async (path) => ({ path, base: await store.blobAt(c.parents[0], path) })));
+    if (recordPaths.length === 0) {
+      // An empty plain commit (a checkpoint): fold it as a merge that changes nothing, so the lane moves on.
+      const mergeCommit = await store.commit({
+        tree: (await store.readCommit(head)).tree,
+        parents: [head, laneCommit],
+        message: formatMessage(parsed.subject || "(empty commit)", { agent, source: "git push", recordPaths: [], laneCommit, resolution: "clean" }),
+        author,
+      });
+      return { status: "merged", laneCommit, mergeCommit, resolution: "clean" };
+    }
     parsed = { ...parsed, trailers: { ...parsed.trailers, agent, source: "git push", recordPaths } };
   }
   const t = laneTrailers(formatMessage(parsed.subject, parsed.trailers, parsed.body));

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { api, type Approval, type Conflict } from "./api";
-import { Diff, Marked, navigate } from "./util";
+import { Diff, Marked, navigate, watchingOther } from "./util";
 
 export function Approve({ id }: { id: number }) {
   const [a, setA] = useState<Approval | null>(null);
@@ -40,6 +40,9 @@ export function Approve({ id }: { id: number }) {
   const question = overlaps.length && !others.length
     ? overlaps.length === 1 ? "Two edits to the same lines" : `Two edits clash in ${overlaps.length} places`
     : others[0]?.kind === "delete" ? "Edited on one side, deleted on the other" : "Two edits disagree";
+  // Repeated headings (or a whole-body merge) cannot be shown section by section: show the whole proposed record.
+  const names = overlaps.map((o) => o.section);
+  const whole = names.some((n, i) => names.indexOf(n) !== i) || names.includes("(body)") || names.includes("(top)");
   const where = overlaps.length === 1 && overlaps[0].section !== "(top)" ? `, ${overlaps[0].section.replace(/^## /, "")}` : "";
 
   return (
@@ -53,8 +56,11 @@ export function Approve({ id }: { id: number }) {
       ) : (
         <>
           {/* Every conflict the decision resolves is on screen: a choice never settles something unseen. */}
+          {whole && a.proposal && a.oursText !== null && (
+            <div className="proposal" aria-label="The whole record you approve"><Marked from={a.oursText} to={a.proposal} /></div>
+          )}
           {overlaps.map((o, i) => {
-            const proposed = a.proposal ? sectionOf(a.proposal, o.section) : null;
+            const proposed = a.proposal && !whole ? sectionOf(a.proposal, o.section) : null;
             return (
               <section key={i} className="clash">
                 {overlaps.length > 1 && <h2>{o.section.replace(/^## /, "")}</h2>}
@@ -92,7 +98,7 @@ export function Approve({ id }: { id: number }) {
       )}
       {error && <p className="note error" role="alert">{error}</p>}
 
-      <div className="bar"><div className="inner">
+      {watchingOther() ? <p className="note">Watching only: decisions apply to the main demo repo.</p> : <div className="bar"><div className="inner">
         {editing !== null ? (
           <>
             <button className="primary" disabled={busy} onClick={() => act("edit", editing)}>Save</button>
@@ -108,7 +114,7 @@ export function Approve({ id }: { id: number }) {
             </div>
           </>
         )}
-      </div></div>
+      </div></div>}
     </div>
   );
 }

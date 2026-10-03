@@ -19,6 +19,8 @@ export type LaneStatus = { agent: string; since: string | null; dirty: number; m
 export type State = {
   repo: string;
   missing?: boolean;
+  /** The repo actions apply to (the Worker's REPO). */
+  actOn: string;
   main: MainCommit[];
   lanes: LaneStatus[];
   approvals: { id: number; agent: string; path: string; createdAt: number; hasProposal: boolean }[];
@@ -87,7 +89,9 @@ async function act<T>(path: string, body: unknown): Promise<T> {
   const headers: Record<string, string> = { "content-type": "application/json" };
   const k = demoKey();
   if (k) headers["x-demo-key"] = k;
-  const r = await fetch(`/api/act${path}`, { method: "POST", headers, body: JSON.stringify(body) });
+  // Name the repo being acted on; the server refuses any but the one it acts for.
+  const repo = new URLSearchParams(location.search).get("repo") ?? (await get<State>("/state")).actOn;
+  const r = await fetch(`/api/act${path}?repo=${encodeURIComponent(repo)}`, { method: "POST", headers, body: JSON.stringify(body) });
   const data = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error((data as { error?: string }).error ?? `${r.status}`);
   return data as T;

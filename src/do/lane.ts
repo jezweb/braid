@@ -8,7 +8,7 @@
 // what they wrote, and Write-Id says which request they answered).
 
 import { DurableObject } from "cloudflare:workers";
-import { EnvelopeError, laneMessage, laneTrailers, validateEnvelope, type Envelope } from "../contract";
+import { EnvelopeError, laneMessage, laneTrailers, parseMessage, validateEnvelope, type Envelope } from "../contract";
 import { readMain, tokenTtl, type MainRead } from "../artifacts";
 import { PathCollisionError, PushRejectedError, Store, type Remote } from "../git/store";
 import type { LaneInfo, MergeAgent } from "./merge-agent";
@@ -29,6 +29,12 @@ async function putAll(storage: DurableObjectStorage, entries: Record<string, unk
   const pairs = Object.entries(entries);
   for (let i = 0; i < pairs.length; i += 100) await storage.put(Object.fromEntries(pairs.slice(i, i + 100)));
   await storage.put(checkpoint);
+}
+
+/** Whether one of main's recent merge commits carries `Lane-Commit: <laneCommit>`. */
+async function laneCommitOnMain(artifacts: Artifacts, repo: string, laneCommit: string): Promise<boolean> {
+  using r = await artifacts.get(repo);
+  return (await r.log({ ref: "main", limit: 200 })).some((c) => parseMessage(c.message).trailers.laneCommit === laneCommit);
 }
 
 export class Lane extends DurableObject<Env> {
@@ -204,8 +210,9 @@ export class Lane extends DurableObject<Env> {
       await this.ready(repo, agent);
       const p = await this.ctx.storage.get<Pending>(PENDING + path);
       const main = await readMain(this.env.ARTIFACTS, repo, path);
-      // Main already holds exactly what we wrote: the merge landed even if its ack never reached us.
-      if (p && main.base === p.blob) await this.ctx.storage.delete(PENDING + path);
+      // A lost ack must not pin a stale pending read forever: if main names our lane commit, it landed.
+      // (Equal bytes are not proof: someone else may have written the same text.)
+      if (p && (await laneCommitOnMain(this.env.ARTIFACTS, repo, p.laneCommit))) await this.ctx.storage.delete(PENDING + path);
       else if (p) {
         // Waiting on a person? Say so: the agent should not build on text that may not land as written.
         const approval = await this.env.MERGE_AGENT.get(this.env.MERGE_AGENT.idFromName(repo)).approvalFor(agent, path);
