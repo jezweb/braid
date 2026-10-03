@@ -28,13 +28,18 @@ export async function gitWorld() {
   const work = (name: string) => {
     const dir = join(root, `work-${name}-${n++}`);
     execFileSync("git", ["clone", "-q", bare(name), dir]);
+    let fresh = false;
     const write = (path: string, content: string) => {
+      // Main may have moved under this clone since its last commit: catch up before editing.
+      if (!fresh && sh(dir, "ls-remote", "--heads", "origin", "main")) sh(dir, "pull", "-q", "--ff-only", "origin", "main");
+      fresh = true;
       mkdirSync(dirname(join(dir, path)), { recursive: true });
       writeFileSync(join(dir, path), content);
     };
     const commit = (message: string) => {
       sh(dir, "add", "-A");
       sh(dir, "commit", "-q", "-m", message);
+      fresh = false;
       sh(dir, "push", "-q", "origin", "HEAD:main");
       return sh(dir, "rev-parse", "HEAD");
     };

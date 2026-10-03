@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { mergeLane, type MergeLaneOptions } from "./merge-lane";
 import type { Remote } from "./git/store";
 import { runG0 } from "./g0";
+import { runMergeRace, runRace } from "./spike-race";
 
 type Env = { SPIKE?: string; SPIKE_KEY?: string; ARTIFACTS: Artifacts };
 
@@ -16,7 +17,8 @@ app.post("/spike/merge", async (c) => {
   try {
     return c.json(await mergeLane(body.canonical, body.lane, body.opts));
   } catch (e) {
-    return c.json({ error: String(e), stack: (e as Error).stack }, 500);
+    console.error(JSON.stringify({ event: "spike_merge_error", error: String(e), stack: (e as Error).stack }));
+    return c.json({ error: String(e) }, 500);
   }
 });
 
@@ -25,6 +27,18 @@ app.post("/spike/g0", async (c) => {
   const key = c.env.SPIKE_KEY;
   if (!key || c.req.header("authorization") !== `Bearer ${key}`) return c.notFound();
   return c.json(await runG0(c.env.ARTIFACTS, c.req.query("keep") === "1"));
+});
+
+app.post("/spike/race", async (c) => {
+  const key = c.env.SPIKE_KEY;
+  if (!key || c.req.header("authorization") !== `Bearer ${key}`) return c.notFound();
+  return c.json(await runRace(c.env.ARTIFACTS, Number(c.req.query("rounds") ?? 10)));
+});
+
+app.post("/spike/merge-race", async (c) => {
+  const key = c.env.SPIKE_KEY;
+  if (!key || c.req.header("authorization") !== `Bearer ${key}`) return c.notFound();
+  return c.json(await runMergeRace(c.env.ARTIFACTS, Number(c.req.query("lanes") ?? 4)));
 });
 
 export default app;

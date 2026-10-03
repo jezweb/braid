@@ -47,10 +47,14 @@ export function mergeRecord({ base, ours, theirs }: MergeInput): MergeResult {
 
   const fm = mergeFrontmatter(b, o, t);
   conflicts.push(...fm.conflicts);
-  const body = threeWay(b.sections, o.sections, t.sections, mergeSection, (key) => ({
-    kind: "delete",
-    detail: `section ${partName(key)} was removed on one side and edited on the other`,
-  }));
+  // Repeated headings are keyed by occurrence, which a new same-named heading would shift.
+  // When any repeated heading's count differs between sides, merge the body as one text.
+  const body = repeatedHeadingsShift(b.sections, o.sections, t.sections)
+    ? wholeBody(b.sections, o.sections, t.sections)
+    : threeWay(b.sections, o.sections, t.sections, mergeSection, (key) => ({
+        kind: "delete",
+        detail: `section ${partName(key)} was removed on one side and edited on the other`,
+      }));
   conflicts.push(...body.conflicts);
   if (conflicts.length) return conflict(conflicts);
 
@@ -169,6 +173,26 @@ function orderKeys(base: Part[], ours: Part[], theirs: Part[]): string[] | Confl
   return keys;
 }
 
+function repeatedHeadingsShift(...sides: Part[][]): boolean {
+  const counts = sides.map((ps) => {
+    const m = new Map<string, number>();
+    for (const p of ps) m.set(partName(p.key), (m.get(partName(p.key)) ?? 0) + 1);
+    return m;
+  });
+  const names = new Set(counts.flatMap((m) => [...m.keys()]));
+  for (const n of names) {
+    const c = counts.map((m) => m.get(n) ?? 0);
+    if (Math.max(...c) > 1 && new Set(c).size > 1) return true;
+  }
+  return false;
+}
+
+function wholeBody(b: Part[], o: Part[], t: Part[]): Merged {
+  const text = (ps: Part[]) => ps.map((p) => p.text).join("");
+  const r = mergeSection("(body)#0", text(b), text(o), text(t));
+  return typeof r === "string" ? { value: [{ key: "#0", text: r }], conflicts: [] } : { value: [], conflicts: [r] };
+}
+
 function mergeSection(key: string, bv: string | undefined, ov: string, tv: string): string | Conflict {
   const lines = (s: string) => s.split(/(?<=\n)/);
   const regions = diff3Merge(lines(ov), lines(bv ?? ""), lines(tv));
@@ -187,7 +211,8 @@ function mergeFrontmatter(b: Split, o: Split, t: Split): { value: Part[] | null;
   // last_edited_* move as one group, from whichever side edited later.
   const group = (xs: Part[]) => JSON.stringify(xs.filter((p) => LAST_EDITED.includes(partName(p.key))));
   let ours = of, theirs = tf;
-  if (group(of) !== group(bf) && group(tf) !== group(bf)) {
+  // With either last_edited_at unreadable there is no "later": the keys merge one by one, so a clash is a conflict.
+  if (group(of) !== group(bf) && group(tf) !== group(bf) && editedAt(of) > -Infinity && editedAt(tf) > -Infinity) {
     const winner = editedAt(of) > editedAt(tf) ? of : tf;
     ours = withGroupFrom(of, winner);
     theirs = withGroupFrom(tf, winner);
@@ -210,7 +235,7 @@ function fieldValue(text: string | undefined): string {
   return (text ?? "").replace(/^[A-Za-z0-9_-]+:\s?/, "").trim();
 }
 
-/** Milliseconds of last_edited_at, or -Infinity when absent or unparseable (ties and unknowns go to the writer). */
+/** Milliseconds of last_edited_at, or -Infinity when absent or unparseable. Ties go to the writer. */
 function editedAt(xs: Part[]): number {
   const v = fieldValue(xs.find((p) => partName(p.key) === "last_edited_at")?.text).replace(/^["']|["']$/g, "");
   const ms = Date.parse(v);

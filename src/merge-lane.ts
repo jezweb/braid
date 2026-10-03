@@ -4,7 +4,7 @@
 
 import { formatMessage, laneTrailers, type Resolution } from "./contract";
 import { mergeRecord, type Conflict } from "./merge";
-import { NotTextError, PathCollisionError, Store, type Remote } from "./git/store";
+import { NotTextError, PathCollisionError, PushRejectedError, Store, type Remote } from "./git/store";
 
 export type LaneOutcome =
   | { status: "merged"; laneCommit: string; mergeCommit: string; resolution: Resolution }
@@ -26,6 +26,8 @@ export type MergeLaneOptions = {
   laneRef?: string;
   /** How much lane history to fetch; a lane further than this behind `since` is an error. */
   depth?: number;
+  /** Attempts when main moves between fetch and push (each re-fetches main and re-merges). */
+  attempts?: number;
   /** Text of a blob main once held. Default: from the store, deepening canonical once if absent. */
   readBase?: (oid: string) => Promise<string>;
   author?: { name: string; email: string };
@@ -37,15 +39,15 @@ export async function mergeLane(canonical: Remote, lane: Remote, opts: MergeLane
   const mainBefore = await store.fetch(canonical, "main", 1);
   const tip = await store.fetch(lane, opts.laneRef ?? "main", opts.depth ?? 50);
   if (!mainBefore || !tip) throw new Error(`missing tip: main=${mainBefore} lane=${tip}`);
+  let mainNow = mainBefore;
 
   // Lane commits after `since`, oldest first, along the first-parent chain.
+  // Each one's parent must be in the store: it is what the commit is diffed against.
   const pending: string[] = [];
   for (let oid = tip; oid !== opts.since; ) {
     pending.unshift(oid);
-    const c = await store.readCommit(oid).catch(() => null);
-    const parent = c?.parents[0];
-    if (!c || !parent || !(await store.has(parent))) {
-      if (parent === opts.since) break;
+    const parent = (await store.readCommit(oid)).parents[0];
+    if (!parent || !(await store.has(parent))) {
       throw new Error(`lane history does not reach ${opts.since} within depth ${opts.depth ?? 50}`);
     }
     oid = parent;
@@ -57,15 +59,32 @@ export async function mergeLane(canonical: Remote, lane: Remote, opts: MergeLane
     return store.readText(oid);
   });
 
-  const outcomes: LaneOutcome[] = [];
+  // Main may move between our fetch and our push (another merge landed). The
+  // push is compare-and-swap on main's old tip: on rejection, fetch and redo.
+  let outcomes: LaneOutcome[] = [];
   let head = mainBefore;
-  for (const laneCommit of pending) {
-    const outcome = await foldOne(store, head, laneCommit, readBase, opts.author);
-    outcomes.push(outcome);
-    if (outcome.status !== "merged") break;
-    head = outcome.mergeCommit;
+  for (let attempt = 1; ; attempt++) {
+    outcomes = [];
+    head = mainNow;
+    for (const laneCommit of pending) {
+      const outcome = await foldOne(store, head, laneCommit, readBase, opts.author);
+      outcomes.push(outcome);
+      if (outcome.status !== "merged") break;
+      head = outcome.mergeCommit;
+    }
+    if (head === mainNow) break;
+    try {
+      await store.push(canonical, head, "main");
+      break;
+    } catch (e) {
+      // A refused push did not land. Any other failure (Artifacts once answered a push under
+      // contention with an empty body) may have: read main back before deciding.
+      const ambiguous = !(e instanceof PushRejectedError);
+      mainNow = (await store.fetch(canonical, "main", ambiguous ? 50 : 1))!;
+      if (ambiguous && (await store.onFirstParentChain(mainNow, head))) break;
+      if (attempt >= (opts.attempts ?? 3)) throw e;
+    }
   }
-  if (head !== mainBefore) await store.push(canonical, head, "main");
   return { mainBefore, mainAfter: head, outcomes, storeBytes: store.fs.bytes(), ms: Date.now() - t0 };
 }
 
@@ -81,6 +100,13 @@ async function foldOne(
   if (!t.ok) return { status: "invalid", laneCommit, errors: t.errors };
   const { subject, trailers } = t.parsed;
 
+  // The trailers must account for every path the commit changed: an undeclared change would be
+  // left out of main while main records the lane commit as merged.
+  const parentTree = (await store.readCommit(c.parents[0])).tree;
+  const declared = new Set(trailers.recordPaths.map((r) => r.path));
+  const undeclared = (await store.changedPaths(parentTree, c.tree)).filter((p) => !declared.has(p));
+  if (undeclared.length) return { status: "invalid", laneCommit, errors: undeclared.map((p) => `changed but not declared: ${p}`) };
+
   const edits = new Map<string, string | null>();
   const conflicts: { path: string; conflicts: Conflict[] }[] = [];
   let resolution: Resolution = "clean";
@@ -88,10 +114,16 @@ async function foldOne(
     for (const rp of trailers.recordPaths) {
       const mainBlob = await store.blobAt(head, rp.path);
       const laneBlob = await store.blobAt(laneCommit, rp.path);
+      if (laneBlob === rp.base) continue; // the writer left it as read: main's stands
       if (mainBlob === rp.base) { edits.set(rp.path, laneBlob); continue; } // main untouched since the writer read it
       if (mainBlob === laneBlob) continue; // already there
+      let baseText: string | null = null;
+      if (rp.base !== null) {
+        try { baseText = await readBase(rp.base); }
+        catch { return { status: "invalid", laneCommit, errors: [`base ${rp.base} of ${rp.path} is not a blob main ever held`] }; }
+      }
       const r = mergeRecord({
-        base: rp.base === null ? null : await readBase(rp.base),
+        base: baseText,
         ours: mainBlob === null ? null : await store.readText(mainBlob),
         theirs: laneBlob === null ? null : await store.readText(laneBlob),
       });

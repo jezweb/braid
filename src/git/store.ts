@@ -28,6 +28,11 @@ export class NotTextError extends Error {
   constructor(readonly oid: string) { super(`blob ${oid} is not UTF-8 text`); }
 }
 
+/** The remote ref moved since we fetched: fetch again and redo the work. */
+export class PushRejectedError extends Error {
+  constructor(readonly detail: string) { super(`push rejected: ${detail}`); }
+}
+
 /** A path that is a file on one side and a folder on the other. Never resolved by replacing either. */
 export class PathCollisionError extends Error {
   constructor(readonly path: string) { super(`path collides with an existing file or folder: ${path}`); }
@@ -77,6 +82,17 @@ export class Store {
 
   async has(oid: string): Promise<boolean> {
     try { await git.readObject({ ...this.base, oid, format: "deflated" }); return true; } catch { return false; }
+  }
+
+  /** Whether `oid` is `tip` or on its first-parent chain, as far as the store holds history. */
+  async onFirstParentChain(tip: string, oid: string, limit = 200): Promise<boolean> {
+    let cur: string | undefined = tip;
+    for (let i = 0; cur && i < limit; i++) {
+      if (cur === oid) return true;
+      if (!(await this.has(cur))) return false;
+      cur = (await this.readCommit(cur)).parents[0];
+    }
+    return false;
   }
 
   async readCommit(oid: string): Promise<CommitInfo> {
@@ -147,6 +163,23 @@ export class Store {
     return (await write(baseTree, root)) ?? (await git.writeTree({ ...this.base, tree: [] }));
   }
 
+  /** Paths whose blob differs between two trees (either may be null = empty). Folders are walked; type changes count. */
+  async changedPaths(a: string | null, b: string | null, prefix = ""): Promise<string[]> {
+    if (a === b) return [];
+    const read = async (t: string | null) => new Map((t ? (await git.readTree({ ...this.base, oid: t })).tree : []).map((e) => [e.path, e]));
+    const [ea, eb] = await Promise.all([read(a), read(b)]);
+    const out: string[] = [];
+    for (const name of new Set([...ea.keys(), ...eb.keys()])) {
+      const x = ea.get(name), y = eb.get(name);
+      if (x?.oid === y?.oid && x?.type === y?.type) continue;
+      const path = prefix + name;
+      const xt = x?.type === "tree" ? x.oid : null, yt = y?.type === "tree" ? y.oid : null;
+      if ((x && x.type !== "tree") || (y && y.type !== "tree")) out.push(path);
+      if (xt || yt) out.push(...(await this.changedPaths(xt, yt, path + "/")));
+    }
+    return [...new Set(out)].sort();
+  }
+
   async commit(c: { tree: string; parents: string[]; message: string; author: Author }): Promise<string> {
     const now = Math.floor(Date.now() / 1000);
     const who = { timestamp: now, timezoneOffset: 0, ...c.author };
@@ -160,14 +193,26 @@ export class Store {
   async push(remote: Remote, oid: string, ref = "main"): Promise<void> {
     const local = `refs/heads/braid-push-${ref}`;
     await git.writeRef({ ...this.base, ref: local, value: oid, force: true });
-    const res = await git.push({
-      ...this.base,
-      http,
-      url: remote.url,
-      ref: local,
-      remoteRef: `refs/heads/${ref}`,
-      onAuth: auth(remote),
-    });
-    if (!res.ok) throw new Error(`push rejected: ${JSON.stringify(res.refs)}`);
+    let res;
+    try {
+      res = await git.push({
+        ...this.base,
+        http,
+        url: remote.url,
+        ref: local,
+        remoteRef: `refs/heads/${ref}`,
+        onAuth: auth(remote),
+      });
+    } catch (e) {
+      // Client-side refusal (isomorphic-git saw main move) or the server's: Artifacts answers a
+      // stale old-tip with "stale ref" (measured 3 Oct 2026, ten concurrent rounds).
+      const code = (e as { code?: string }).code;
+      if (code === "PushRejectedError") throw new PushRejectedError(String(e));
+      if (code === "GitPushError" && /stale ref|non-fast-forward|fetch first|failed to lock/i.test(String(e))) throw new PushRejectedError(String(e));
+      throw e;
+    }
+    // Trust the per-ref status, not only the overall flag.
+    const r = res.refs?.[`refs/heads/${ref}`];
+    if (!res.ok || !r?.ok) throw new PushRejectedError(JSON.stringify(res.refs));
   }
 }

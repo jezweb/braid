@@ -1,5 +1,6 @@
 // Real repos on a local smart-HTTP git server; no mocks.
 import { describe, it, expect, afterAll } from "vitest";
+import { execFileSync } from "node:child_process";
 import { gitWorld, raw, sh } from "./helpers";
 import { mergeLane } from "../src/merge-lane";
 import { laneMessage, parseMessage, type Change } from "../src/contract";
@@ -113,5 +114,47 @@ describe("mergeLane: folding lane commits into main", async () => {
     const r2 = await mergeLane(url("memory"), url("memory--collider"), { since: col.forkPoint });
     expect(r2.outcomes[0].status).toBe("invalid");
     expect(main()).toBe(before);
+  });
+  it("a change the trailers do not declare makes the commit invalid", async () => {
+    const sn = lane("sneaky");
+    const before = main();
+    const base = sn.blob("places/mill.md");
+    sn.write("Declares one path, changes two", [{ path: "places/mill.md", base, content: "# The Mill\n\nsneaky\n" }, { path: "notes/hidden.md", base: null, content: "hidden\n" }],
+      laneMessage({ agent: "sneaky", reason: "Declares one path", changes: [{ path: "places/mill.md", base, content: "x" }] }));
+    const r = await mergeLane(url("memory"), url("memory--sneaky"), { since: sn.forkPoint });
+    expect(r.outcomes).toMatchObject([{ status: "invalid", errors: ["changed but not declared: notes/hidden.md"] }]);
+    expect(main()).toBe(before);
+  });
+
+  it("a declared path the writer left as read keeps main's version", async () => {
+    const lz = lane("lazy");
+    const base = lz.blob("people/ada-quill.md");
+    c.write("people/ada-quill.md", "# Ada Quill\n\nPhone: 555 0177\n");
+    c.commit("main moves Ada");
+    lz.write("Touches Ada without changing her", [{ path: "people/ada-quill.md", base, content: raw(lz.dir, "show", "HEAD:people/ada-quill.md") }, { path: "notes/lazy.md", base: null, content: "x\n" }]);
+    const r = await mergeLane(url("memory"), url("memory--lazy"), { since: lz.forkPoint });
+    expect(r.outcomes[0].status, JSON.stringify(r.outcomes)).toBe("merged");
+    expect(show("people/ada-quill.md")).toContain("555 0177");
+  });
+
+  it("main moving between fetch and push: the push is refused, main re-read, the merge redone", async () => {
+    const rc = lane("racer");
+    const theirs = raw(w.bare("memory"), "show", `${seed}:towns/harbourne.md`) + "## Events\n\nA fair in spring.\n";
+    rc.write("Harbourne: add events", [{ path: "towns/harbourne.md", base: seedHarbourne, content: theirs }]);
+    let moved = "";
+    const readBase = async (oid: string) => {
+      if (!moved) {
+        c.write("places/bakery.md", "# Bakery\n");
+        moved = c.commit("main moves mid-merge");
+      }
+      return execFileSync("git", ["cat-file", "blob", oid], { cwd: w.bare("memory"), encoding: "utf8" });
+    };
+    const r = await mergeLane(url("memory"), url("memory--racer"), { since: rc.forkPoint, readBase });
+    expect(r.outcomes[0].status).toBe("merged");
+    expect(sh(w.bare("memory"), "rev-parse", "main~1")).toBe(moved); // merged on top of the commit that raced it
+    expect(show("places/bakery.md")).toContain("Bakery");
+    expect(show("towns/harbourne.md")).toContain("A fair in spring.");
+    expect(show("towns/harbourne.md")).toContain("555 0142");
+    fsck();
   });
 });

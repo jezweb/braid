@@ -161,3 +161,26 @@ describe("merge table: review findings (codex, 3 Oct)", () => {
     expect(r.status === "clean" && r.content).toBe(theirs.replace("\na\n", "\na2\n"));
   });
 });
+
+describe("merge table: panel findings (bt, 3 Oct)", () => {
+  it("an unreadable last_edited_at gives no 'later': clashing keys conflict", () => {
+    const base = "---\nlast_edited_by: a\nlast_edited_at: \"2026-10-03T10:00:00+10:00\"\n---\nx\n";
+    const ours = base.replace("by: a", "by: b").replace("10:00:00", "10:05:00");
+    const theirs = base.replace("by: a", "by: c").replace(/last_edited_at: .*\n/, "last_edited_at: soon\n");
+    expect(mergeRecord({ base, ours, theirs })).toMatchObject({ status: "conflict" });
+  });
+
+  it("a new same-named heading merges the body as one text instead of shifting keys", () => {
+    const base = "# T\n\n## Note\n\none\n\n## End\n\nz\n";
+    const ours = base.replace("# T\n\n", "# T\n\n## Note\n\nzero\n\n");
+    const theirs = base.replace("\nz\n", "\nzz\n");
+    const r = mergeRecord({ base, ours, theirs });
+    expect(r).toEqual({ status: "clean", resolution: "clean", content: "# T\n\n## Note\n\nzero\n\n## Note\n\none\n\n## End\n\nzz\n" });
+  });
+
+  it("keeps a blank line before the closing delimiter", () => {
+    const base = "---\na: 1\n\n---\nbody\n";
+    const r = mergeRecord({ base, ours: base.replace("a: 1", "a: 2"), theirs: base.replace("body", "body2") });
+    expect(r.status === "clean" && r.content).toBe("---\na: 2\n\n---\nbody2\n");
+  });
+});

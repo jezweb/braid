@@ -98,6 +98,7 @@ export class MemFS {
     const t = this.norm(p);
     const par = this.parent(t);
     if (!this.entries.has(par)) await this.mkdir(par, { recursive: true });
+    if (this.entries.get(t)?.kind === "dir") throw fsError("EISDIR", p);
     const bytes = typeof data === "string" ? enc.encode(data) : data instanceof Uint8Array ? data : new Uint8Array(data);
     this.entries.set(t, { kind: "file", data: bytes, mtimeMs: Date.now() });
     this.dir(par).children.add(this.base(t));

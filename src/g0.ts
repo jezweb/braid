@@ -100,7 +100,8 @@ export async function runG0(artifacts: Artifacts, keep = false) {
     });
     return { pass: pass && !!ada?.includes("555 0199"), name, laneName, forkReadyMs, head, parentsExpected: [mainBefore, laneCommit], trailers, ada, steps };
   } catch (e) {
-    return { pass: false, name, error: String(e), stack: (e as Error).stack, steps };
+    console.error(JSON.stringify({ event: "g0_error", error: String(e), stack: (e as Error).stack }));
+    return { pass: false, name, error: String(e), steps };
   } finally {
     if (!keep) {
       for (const n of [laneName, name]) await artifacts.delete(n).catch(() => false);
