@@ -76,7 +76,12 @@ export type ScenarioResult = {
   error?: string;
 };
 
-export async function runScenario(env: Env, opts: { repo: string; mode?: "unattended" | "interactive"; personWaitMs?: number }): Promise<ScenarioResult> {
+/**
+ * phase "all" (default) sets the stage and plays; "stage" only rebuilds, seeds and forks every lane (the slow
+ * part, about 35 s), so filming can start on a ready stage; "play" runs the acts on a stage already set.
+ */
+export async function runScenario(env: Env, opts: { repo: string; mode?: "unattended" | "interactive"; personWaitMs?: number; phase?: "all" | "stage" | "play" }): Promise<ScenarioResult> {
+  const phase = opts.phase ?? "all";
   const { repo } = opts;
   const mode = opts.mode ?? "unattended";
   const person = env.PERSON_AGENT ?? "person";
@@ -107,16 +112,26 @@ export async function runScenario(env: Env, opts: { repo: string; mode?: "unatte
 
   try {
     // ---- the stage: a fresh repo, every lane forked in advance (forks take seconds each)
-    await rebuild(env, repo, [...AGENTS, person, PLAIN]);
-    const created = await createRepo(env.ARTIFACTS, repo);
-    const seed = await Store.open();
-    const edits = new Map<string, string>();
-    for (const [p, text] of Object.entries(SEED)) edits.set(p, await seed.writeText(text));
-    const tree = await seed.editTree(null, edits);
-    await seed.push({ url: created.remote, token: created.token }, await seed.commit({ tree, parents: [], message: "Harbourne: first records", author: { name: "seed", email: "seed@braid.invalid" } }));
-    for (const a of [...AGENTS, person, PLAIN]) await ma.provisionLane(repo, a);
-    await ma.watch(repo, 600);
-    mark("stage set");
+    if (phase === "play") {
+      // The stage must be fresh: the seed commit and nothing else on main.
+      const log = await mainLog().catch(() => []);
+      if (log.length !== 1) throw new Error(`play needs a freshly staged repo (main has ${log.length} commits); run phase=stage first`);
+      for (const a of [...AGENTS, person, PLAIN]) await ma.provisionLane(repo, a);
+      await ma.watch(repo, 600);
+      mark("stage found");
+    } else {
+      await rebuild(env, repo, [...AGENTS, person, PLAIN]);
+      const created = await createRepo(env.ARTIFACTS, repo);
+      const seed = await Store.open();
+      const edits = new Map<string, string>();
+      for (const [p, text] of Object.entries(SEED)) edits.set(p, await seed.writeText(text));
+      const tree = await seed.editTree(null, edits);
+      await seed.push({ url: created.remote, token: created.token }, await seed.commit({ tree, parents: [], message: "Harbourne: first records", author: { name: "seed", email: "seed@braid.invalid" } }));
+      for (const a of [...AGENTS, person, PLAIN]) await ma.provisionLane(repo, a);
+      await ma.watch(repo, 600);
+      mark("stage set");
+      if (phase === "stage") return { pass: true, repo, mode, ms: Date.now() - t0, checks: { staged: true }, fallbacks, approvals: 0, merges: 0, steps };
+    }
 
     // ---- act 1: everyone reads, then everyone writes at once
     const [town0, ada0] = await Promise.all([read("editor", TOWN), read("fact-checker", ADA)]);

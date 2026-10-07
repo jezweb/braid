@@ -127,7 +127,8 @@ app.post("/spike/scenario", async (c) => {
     return c.json({ error: `this deletes and rebuilds ${repo}; pass ?rebuild=${repo} to confirm, or use a scene-* repo` }, 409);
   }
   const mode = c.req.query("mode") === "interactive" ? "interactive" : "unattended";
-  return c.json(await runScenario(c.env, { repo, mode }));
+  const phase = c.req.query("phase") === "stage" ? "stage" : c.req.query("phase") === "play" ? "play" : "all";
+  return c.json(await runScenario(c.env, { repo, mode, phase }));
 });
 
 // Open one fresh conflict on REPO without rebuilding it: two agents read the town, then both rewrite its

@@ -73,6 +73,12 @@ function Braid({ state }: { state: State }) {
             <text className="tick" x={width - 4} y={t.y + 14} textAnchor="end">{t.label}</text>
           </g>
         ))}
+        {g.nowY !== null && (
+          <g>
+            <line x1={0} x2={width} y1={g.nowY} y2={g.nowY} stroke="var(--bar)" strokeWidth={1} strokeDasharray="4 4" />
+            <text className="tick" x={width - 4} y={g.nowY - 4} textAnchor="end" style={{ fill: "var(--bar)" }}>now</text>
+          </g>
+        )}
         {/* lanes: a channel leaving main at the top, running down beside it */}
         {g.lanes.map((l, i) => (
           <g key={l.agent}>
@@ -116,14 +122,19 @@ function layout(state: State, width: number) {
   // On a phone the names do not fit over the channels: a legend above the river names them instead.
   const narrow = width < 600;
   const top = narrow ? 40 : 56, minGap = 14;
-  // The axis runs to now while the river is busy; once it goes quiet it ends at the last change,
-  // so a finished story fills the page instead of crowding the top of an empty one.
   const last = commits.at(-1)?.at ?? Date.now() / 1000;
   const live = Date.now() / 1000 - last < 120;
   const t0 = commits[0]?.at ?? last;
-  const t1 = live ? Math.max(Date.now() / 1000, last) : last;
+  // While live the axis is a fixed height over a window from the first change, so a merge drops into
+  // place and stays there and only the "now" line moves (rescaling on every poll made the river jump on
+  // camera). The window starts at two minutes and doubles only when the story outgrows it. Once quiet,
+  // the axis ends at the last change, so a finished story fills the page.
+  const elapsed = Math.max(Date.now() / 1000, last) - t0;
+  let windowS = 120;
+  while (windowS < elapsed + 10) windowS *= 2;
+  const t1 = live ? t0 + windowS : last;
   const span = Math.max(t1 - t0, 1);
-  const scaleH = Math.max(360, Math.min(900, merges.length * 22));
+  const scaleH = live ? 600 : Math.max(360, Math.min(900, merges.length * 22));
 
   // Real time, pushed apart only where commits land in the same instant.
   let lastY = -Infinity;
@@ -134,18 +145,21 @@ function layout(state: State, width: number) {
     lastY = y;
   }
   const bottom = Math.max(lastY, top + scaleH) + 40;
+  // Where "now" is on the river while live; a held lane waits there, at its gravel bar.
+  const nowAt = live ? Math.round(top + ((Date.now() / 1000 - t0) / span) * scaleH) : null;
 
-  const mainX = Math.round(width / 2);
+  // On a phone the clock labels get their own strip on the right, so no lane runs under them.
+  const gutter = narrow ? 64 : 0;
+  const mainX = Math.round((width - gutter) / 2);
   const half = Math.ceil(agents.length / 2);
-  const gap = Math.min(120, (width / 2 - 36) / Math.max(half, 1));
+  const gap = Math.min(120, (mainX - (narrow ? 28 : 36)) / Math.max(half, 1));
   const lanes = agents.map((agent, i) => {
     const side = i % 2 === 0 ? -1 : 1;
     const x = Math.round(mainX + side * gap * (Math.floor(i / 2) + 1));
     const mine = merges.filter((m) => m.agent === agent);
     const held = state.lanes.find((l) => l.agent === agent)?.held;
-    const end = held ? bottom - 20 : (yOf.get(mine.at(-1)?.hash ?? "") ?? top + 40) - 18;
+    const end = held ? (nowAt ?? bottom - 20) : (yOf.get(mine.at(-1)?.hash ?? "") ?? top + 40) - 18;
     const channel = `M ${mainX} ${top - 20} C ${mainX} ${top + 10}, ${x} ${top - 10}, ${x} ${top + 24} L ${x} ${Math.max(end, top + 24)}`;
-    // On a narrow screen neighbouring labels would collide: lift every other one a row.
     return { agent, x, colour: colourOf(agent), short: agent, channel };
   });
   const xOf = new Map(lanes.map((l) => [l.agent, l.x]));
@@ -159,7 +173,7 @@ function layout(state: State, width: number) {
     };
   });
   const bars = state.lanes.filter((l) => l.held).map((l) => ({
-    agent: l.agent, x: xOf.get(l.agent) ?? mainX, y: bottom - 20,
+    agent: l.agent, x: xOf.get(l.agent) ?? mainX, y: nowAt ?? bottom - 20,
     approval: state.approvals.find((a) => a.agent === l.agent)?.id ?? 0,
   })).filter((b) => b.approval);
 
@@ -168,9 +182,9 @@ function layout(state: State, width: number) {
     const t = t0 + (span * k) / 3;
     // A short story reads better on the clock than as "23m ago" twice.
     const clock = new Date(t * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: span < 600 ? "2-digit" : undefined });
-    ticks.push({ y: Math.round(top + (k / 3) * scaleH), label: k === 3 && live ? "now" : span < 3600 ? clock : ago(t) });
+    ticks.push({ y: Math.round(top + (k / 3) * scaleH), label: span < 3600 ? clock : ago(t) });
   }
-  return { top, bottom, height: bottom + 8, mainX, lanes, merges: mergeMarks, bars, ticks, narrow } as const;
+  return { top, bottom, height: bottom + 8, mainX, lanes, merges: mergeMarks, bars, ticks, nowY: nowAt, narrow } as const;
 }
 
 export type { Layout };
