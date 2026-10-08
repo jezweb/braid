@@ -26,22 +26,31 @@ export type ApiEnv = {
   /** Cloudflare Access: the team domain (https://<team>.cloudflareaccess.com) and the application's AUD tag. */
   ACCESS_TEAM?: string;
   ACCESS_AUD?: string;
+  /** The client id of the one Access service token allowed to act, as DEMO_ACTOR (for filming the demo). */
+  DEMO_SERVICE_ID?: string;
 };
 
-/** The verified email from a Cloudflare Access JWT, or undefined. Only trusted when ACCESS_TEAM and ACCESS_AUD are set. */
-export async function accessEmail(env: ApiEnv, jwt: string | undefined): Promise<string | undefined> {
-  return (await accessCheck(env, jwt)).email;
+/** Who a Cloudflare Access JWT signs in, or undefined. Only trusted when ACCESS_TEAM and ACCESS_AUD are set. */
+export async function accessActor(env: ApiEnv, jwt: string | undefined): Promise<string | undefined> {
+  return (await accessCheck(env, jwt)).actor;
 }
 
-/** The verified email, or why there is none (kept in the act log so a failed sign-in explains itself). */
-export async function accessCheck(env: ApiEnv, jwt: string | undefined): Promise<{ email?: string; why?: string }> {
+/**
+ * Who is signed in, or why nobody is (kept in the act log so a failed sign-in explains itself). A person
+ * is their verified email. A service token carries no email: only the one named in DEMO_SERVICE_ID may
+ * act, and it acts as DEMO_ACTOR, marked "(demo)" in every trailer.
+ */
+export async function accessCheck(env: ApiEnv, jwt: string | undefined): Promise<{ actor?: string; why?: string }> {
   if (!env.ACCESS_TEAM || !env.ACCESS_AUD) return { why: "access not configured" };
   if (!jwt) return { why: "no access token" };
   const r = await verifyAccess(env, jwt);
-  return typeof r === "string" ? { why: r } : { email: r.email };
+  if (typeof r === "string") return { why: r };
+  if (r.email) return { actor: r.email };
+  if (r.service && env.DEMO_SERVICE_ID && env.DEMO_ACTOR && r.service === env.DEMO_SERVICE_ID) return { actor: `${env.DEMO_ACTOR} (demo)` };
+  return { why: r.service ? "service token not allowed to act" : "no email claim" };
 }
 
-async function verifyAccess(env: ApiEnv, jwt: string): Promise<string | { email: string }> {
+async function verifyAccess(env: ApiEnv, jwt: string): Promise<string | { email?: string; service?: string }> {
   if (!env.ACCESS_TEAM || !env.ACCESS_AUD) return "access not configured";
   const [h, p, sig] = jwt.split(".");
   if (!h || !p || !sig) return "malformed token";
@@ -50,7 +59,7 @@ async function verifyAccess(env: ApiEnv, jwt: string): Promise<string | { email:
     const b = x.replace(/-/g, "+").replace(/_/g, "/");
     return Uint8Array.from(atob(b + "=".repeat((4 - (b.length % 4)) % 4)), (c) => c.charCodeAt(0));
   };
-  let header: { kid?: string; alg?: string }, payload: { aud?: string | string[]; email?: string; exp?: number; iss?: string };
+  let header: { kid?: string; alg?: string }, payload: { aud?: string | string[]; email?: string; common_name?: string; exp?: number; iss?: string };
   try {
     header = JSON.parse(new TextDecoder().decode(dec(h)));
     payload = JSON.parse(new TextDecoder().decode(dec(p)));
@@ -68,7 +77,7 @@ async function verifyAccess(env: ApiEnv, jwt: string): Promise<string | { email:
   const key = await crypto.subtle.importKey("jwk", jwk, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["verify"]);
   const ok = await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, dec(sig), new TextEncoder().encode(`${h}.${p}`));
   if (!ok) return "bad signature";
-  return payload.email ? { email: payload.email } : "no email claim";
+  return { email: payload.email || undefined, service: payload.common_name || undefined };
 }
 
 export type MainCommit = {
@@ -209,7 +218,7 @@ api.use("/act/*", async (c, next) => {
   const jwt = c.req.header("cf-access-jwt-assertion");
   const check = await accessCheck(c.env, jwt);
   const demo = !!c.env.DEMO_ACTOR && !!c.env.ACT_KEY && c.req.header("x-demo-key") === c.env.ACT_KEY;
-  const actor = check.email ?? (demo ? `${c.env.DEMO_ACTOR} (demo)` : undefined);
+  const actor = check.actor ?? (demo ? `${c.env.DEMO_ACTOR} (demo)` : undefined);
   // Every attempt is logged (no token values): a failed decision from a phone must explain itself.
   const log = (status: number, note?: string) =>
     mergeAgent(c.env).logAct({ at: Date.now(), path: new URL(c.req.url).pathname, token: !!jwt, why: check.why, actor: actor ?? null, status, note }).catch(() => undefined);

@@ -107,6 +107,8 @@ printf %s "https://<team>.cloudflareaccess.com" | npx wrangler secret put ACCESS
 printf %s "<application AUD tag>"               | npx wrangler secret put ACCESS_AUD
 ```
 
+To film or script the approvals without a person, add an Access service token to the application's policy and set its client id as `DEMO_SERVICE_ID` (`printf %s "<client id>" | npx wrangler secret put DEMO_SERVICE_ID`). That token, and no other, acts as `DEMO_ACTOR`, and every decision it makes says "(demo)".
+
 **Clean up.** Each run leaves its repo plus one fork per agent (eight in all). With `NS` your namespace and `R` the repo:
 
 ```sh
