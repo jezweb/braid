@@ -2,9 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { api, signInHref, type Approval, type Conflict } from "./api";
-import { Diff, Marked, navigate, watchingOther } from "./util";
+import { Diff, Marked, navigate, useWatchingOther } from "./util";
 
 export function Approve({ id }: { id: number }) {
+  const watching = useWatchingOther();
   const [a, setA] = useState<Approval | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -57,7 +58,8 @@ export function Approve({ id }: { id: number }) {
         <>
           {/* Every conflict the decision resolves is on screen: a choice never settles something unseen. */}
           {whole && a.proposal && a.oursText !== null && (
-            <div className="proposal" aria-label="The whole record you approve"><Marked from={a.oursText} to={a.proposal} /></div>
+            <><p className="proposal-label">Proposed: the whole record, with both edits</p>
+            <div className="proposal" aria-label="The whole record you approve"><Marked from={a.oursText} to={a.proposal} /></div></>
           )}
           {overlaps.map((o, i) => {
             const proposed = a.proposal && !whole ? sectionOf(a.proposal, o.section) : null;
@@ -65,7 +67,8 @@ export function Approve({ id }: { id: number }) {
               <section key={i} className="clash">
                 {overlaps.length > 1 && <h2>{o.section.replace(/^## /, "")}</h2>}
                 {proposed !== null ? (
-                  <div className="proposal" aria-label="The text you approve"><Marked from={body(o.base)} to={body(proposed)} /></div>
+                  <><p className="proposal-label">Proposed: one version with both edits</p>
+                  <div className="proposal" aria-label="The text you approve"><Marked from={body(o.base)} to={body(proposed)} /></div></>
                 ) : null}
                 <details className="compare" open={proposed === null}>
                   <summary>Compare versions</summary>
@@ -98,7 +101,7 @@ export function Approve({ id }: { id: number }) {
       )}
       {error === "SIGNIN" ? <p className="note" role="alert"><a href={signInHref()}>Sign in</a> to decide.</p> : error && <p className="note error" role="alert">{error}</p>}
 
-      {watchingOther() ? <p className="note">Watching only: decisions apply to the main demo repo.</p> : <div className="bar"><div className="inner">
+      {watching ? <p className="note">Watching only: decisions apply to the main demo repo.</p> : <div className="bar"><div className="inner">
         {editing !== null ? (
           <>
             <button className="primary" disabled={busy} onClick={() => act("edit", editing)}>Save</button>

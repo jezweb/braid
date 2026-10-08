@@ -70,7 +70,8 @@ function Braid({ state }: { state: State }) {
         {g.ticks.map((t) => (
           <g key={t.y}>
             <line x1={0} x2={width} y1={t.y} y2={t.y} stroke="var(--rule)" strokeDasharray="2 6" />
-            <text className="tick" x={width - 4} y={t.y + 14} textAnchor="end">{t.label}</text>
+            {/* A clock label steps aside when "now" sits on it. */}
+            {(g.nowY === null || Math.abs(t.y + 14 - (g.nowY - 4)) > 16) && <text className="tick" x={width - 4} y={t.y + 14} textAnchor="end">{t.label}</text>}
           </g>
         ))}
         {g.nowY !== null && (

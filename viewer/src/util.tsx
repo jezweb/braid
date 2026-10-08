@@ -1,5 +1,6 @@
 import { useEffect, useState, type JSX } from "react";
 import { diffLines, diffWords } from "diff";
+import { api } from "./api";
 
 // One channel colour per agent, from a survey-chart palette; stable across reloads.
 const CHANNELS = ["#2e7d8c", "#5b7f3a", "#8a5a9e", "#b5651d", "#3d6fb0", "#9a4f63", "#4f6b5e", "#7a6a2b"];
@@ -97,5 +98,19 @@ export function Marked({ from, to }: { from: string; to: string }) {
   return <>{diffWords(from, to).filter((p) => !p.removed).map((p, i) => (p.added ? <mark key={i}>{p.value}</mark> : <span key={i}>{p.value}</span>))}</>;
 }
 
-/** Watching another repo via ?repo= is look-only: actions always apply to the Worker's own repo. */
-export const watchingOther = () => !!new URLSearchParams(location.search).get("repo");
+/** The repo this Worker acts on, asked once per page load. */
+let actOn: Promise<string | null> | undefined;
+const actOnRepo = () => (actOn ??= api.state().then((s) => s.actOn).catch(() => null));
+
+/**
+ * True while watching a repo other than the one actions apply to (via ?repo=): such pages are look-only.
+ * Look-only until the answer arrives, so another repo never flashes buttons it cannot use.
+ */
+export function useWatchingOther(): boolean {
+  const named = new URLSearchParams(location.search).get("repo");
+  const [other, setOther] = useState(!!named);
+  useEffect(() => {
+    if (named) actOnRepo().then((r) => setOther(r !== named));
+  }, [named]);
+  return other;
+}
