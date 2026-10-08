@@ -80,7 +80,7 @@ export type ScenarioResult = {
  * phase "all" (default) sets the stage and plays; "stage" only rebuilds, seeds and forks every lane (the slow
  * part, about 35 s), so filming can start on a ready stage; "play" runs the acts on a stage already set.
  */
-export async function runScenario(env: Env, opts: { repo: string; mode?: "unattended" | "interactive"; personWaitMs?: number; phase?: "all" | "stage" | "play"; paceMs?: number }): Promise<ScenarioResult> {
+export async function runScenario(env: Env, opts: { repo: string; mode?: "unattended" | "interactive"; personWaitMs?: number; phase?: "all" | "stage" | "play"; paceMs?: number; plainExternal?: boolean }): Promise<ScenarioResult> {
   const phase = opts.phase ?? "all";
   // Unattended, the runner stands in for the person; paceMs makes it wait before each decision, so a
   // recording can show the question and the record before the answer lands.
@@ -223,17 +223,19 @@ export async function runScenario(env: Env, opts: { repo: string; mode?: "unatte
     checks.undoOfUndoReapplied = (await mainText(env, repo, TOWN)) === afterDelete;
     mark("act 3 undo and undo of undo");
 
-    // ---- act 4: an agent that only knows git
-    if (mode === "unattended") await pace();
-    const info = await ma.provisionLane(repo, PLAIN);
-    const g = await Store.open();
-    const tip = (await g.fetch({ url: info.remote, token: info.token }, "main", 1))!;
-    const gt = await g.editTree((await g.readCommit(tip)).tree, new Map([["places/mill-cafe.md", await g.writeText("# The Mill Café\n\nA made-up café beside the mill. Phone: 555 0177.\n")]]));
-    await g.push({ url: info.remote, token: info.token }, await g.commit({ tree: gt, parents: [tip], message: "Add the Mill Café", author: { name: PLAIN, email: `${PLAIN}@braid.invalid` } }));
-    await until(async () => (await mainLog())[0]?.trailers.agent === PLAIN, 60_000);
+    // ---- act 4: an agent that only knows git (plainExternal: a real `git push` from outside, e.g. a recording)
+    if (mode === "unattended" && !opts.plainExternal) await pace();
+    if (!opts.plainExternal) {
+      const info = await ma.provisionLane(repo, PLAIN);
+      const g = await Store.open();
+      const tip = (await g.fetch({ url: info.remote, token: info.token }, "main", 1))!;
+      const gt = await g.editTree((await g.readCommit(tip)).tree, new Map([["places/mill-cafe.md", await g.writeText("# The Mill Café\n\nA made-up café beside the mill. Phone: 555 0177.\n")]]));
+      await g.push({ url: info.remote, token: info.token }, await g.commit({ tree: gt, parents: [tip], message: "Add the Mill Café", author: { name: PLAIN, email: `${PLAIN}@braid.invalid` } }));
+    }
+    await until(async () => (await mainLog())[0]?.trailers.agent === PLAIN, opts.plainExternal ? (opts.personWaitMs ?? 600_000) : 60_000);
     await drained();
     checks.plainGitMerged = (await mainLog()).some((c) => c.trailers.agent === PLAIN && c.trailers.source === "git push") &&
-      (await mainText(env, repo, "places/mill-cafe.md")).includes("Mill Café");
+      (opts.plainExternal || (await mainText(env, repo, "places/mill-cafe.md")).includes("Mill Café"));
     mark("act 4 plain git");
 
     // ---- the closer: what main says now

@@ -99,18 +99,27 @@ app.post("/spike/lane-token", async (c) => {
   if (!key || c.req.header("authorization") !== `Bearer ${key}`) return c.notFound();
   const { agent, watch } = await c.req.json<{ agent: string; watch?: number }>();
   if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(agent ?? "")) return c.json({ error: "agent must be a slug" }, 400);
-  const repo = c.env.REPO ?? "memory";
+  const repo = tokenRepo(c.env, c.req.query("repo"));
+  if (!repo) return c.json({ error: "repo must be REPO or a scene-* repo" }, 400);
   const ma = c.env.MERGE_AGENT.get(c.env.MERGE_AGENT.idFromName(repo));
   const info = await ma.provisionLane(repo, agent);
   await ma.watch(repo, watch ?? 600);
   return c.json({ remote: info.remote, token: info.token, forkPoint: info.forkPoint });
 });
 
-// A read token for the canonical repo: for `git clone` and `git log --graph` on main.
+/** The repo a token route serves: REPO by default, or a scene-* repo named in ?repo=. */
+function tokenRepo(env: Env, named: string | undefined): string | undefined {
+  const repo = named ?? env.REPO ?? "memory";
+  return repo === (env.REPO ?? "memory") || /^scene-[a-z0-9-]{1,40}$/.test(repo) ? repo : undefined;
+}
+
+// A read token for the canonical repo (or a scene-* repo): for `git clone` and `git log --graph` on main.
 app.post("/spike/read-token", async (c) => {
   const key = c.env.SPIKE_KEY;
   if (!key || c.req.header("authorization") !== `Bearer ${key}`) return c.notFound();
-  using r = await c.env.ARTIFACTS.get(c.env.REPO ?? "memory");
+  const repo = tokenRepo(c.env, c.req.query("repo"));
+  if (!repo) return c.json({ error: "repo must be REPO or a scene-* repo" }, 400);
+  using r = await c.env.ARTIFACTS.get(repo);
   const [info, t] = await Promise.all([r.info(), r.createToken("read", 3600)]);
   return c.json({ remote: info.remote, token: t.plaintext });
 });
@@ -129,7 +138,8 @@ app.post("/spike/scenario", async (c) => {
   const mode = c.req.query("mode") === "interactive" ? "interactive" : "unattended";
   const phase = c.req.query("phase") === "stage" ? "stage" : c.req.query("phase") === "play" ? "play" : "all";
   const paceMs = Number(c.req.query("pace") ?? 0) || 0;
-  return c.json(await runScenario(c.env, { repo, mode, phase, paceMs }));
+  const plainExternal = c.req.query("plain") === "external";
+  return c.json(await runScenario(c.env, { repo, mode, phase, paceMs, plainExternal }));
 });
 
 // Open one fresh conflict on REPO without rebuilding it: two agents read the town, then both rewrite its
