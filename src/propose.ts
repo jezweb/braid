@@ -12,7 +12,7 @@ type Overlap = Extract<Conflict, { kind: "overlap" }>;
 
 const SYSTEM = `You merge two edits of one section of a markdown record into the version a careful editor would publish.
 You get the section as it was (BASE), as one writer changed it (A), and as another writer changed it (B).
-Keep every change each writer made on purpose: a fact one added, a wording one simplified, a correction. Say each fact once. Keep it about as long as the longer of A and B.
+Keep every change each writer made on purpose: a fact one added, a wording one simplified, a correction. Say each fact once. Never return A or B unchanged: the merged text must carry both writers' changes. Keep it about as long as the longer of A and B.
 Reply with the merged section only: the same heading line if the inputs have one, then the text. No commentary, no code fences.`;
 
 /** One merged section, or undefined when the model gives nothing usable (one retry). */
