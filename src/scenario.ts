@@ -220,6 +220,7 @@ export async function runScenario(env: Env, opts: { repo: string; mode?: "unatte
     mark("act 3 undo and undo of undo");
 
     // ---- act 4: an agent that only knows git
+    if (mode === "unattended") await pace();
     const info = await ma.provisionLane(repo, PLAIN);
     const g = await Store.open();
     const tip = (await g.fetch({ url: info.remote, token: info.token }, "main", 1))!;
