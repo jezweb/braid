@@ -80,8 +80,11 @@ export type ScenarioResult = {
  * phase "all" (default) sets the stage and plays; "stage" only rebuilds, seeds and forks every lane (the slow
  * part, about 35 s), so filming can start on a ready stage; "play" runs the acts on a stage already set.
  */
-export async function runScenario(env: Env, opts: { repo: string; mode?: "unattended" | "interactive"; personWaitMs?: number; phase?: "all" | "stage" | "play" }): Promise<ScenarioResult> {
+export async function runScenario(env: Env, opts: { repo: string; mode?: "unattended" | "interactive"; personWaitMs?: number; phase?: "all" | "stage" | "play"; paceMs?: number }): Promise<ScenarioResult> {
   const phase = opts.phase ?? "all";
+  // Unattended, the runner stands in for the person; paceMs makes it wait before each decision, so a
+  // recording can show the question and the record before the answer lands.
+  const pace = () => new Promise((r) => setTimeout(r, Math.min(opts.paceMs ?? 0, 60_000)));
   const { repo } = opts;
   const mode = opts.mode ?? "unattended";
   const person = env.PERSON_AGENT ?? "person";
@@ -172,8 +175,10 @@ export async function runScenario(env: Env, opts: { repo: string; mode?: "unatte
       const q = (await ma.approvals("open")).find((a) => a.laneCommit === conflicted);
       if (!q) break;
       asked++;
-      if (mode === "unattended") await ma.resolve(repo, q.id, q.proposal ? "approve" : "theirs", "scenario@braid.invalid");
-      else await until(async () => (await ma.approval(q.id))?.status !== "open", opts.personWaitMs ?? 600_000);
+      if (mode === "unattended") {
+        await pace();
+        await ma.resolve(repo, q.id, q.proposal ? "approve" : "theirs", "scenario@braid.invalid");
+      } else await until(async () => (await ma.approval(q.id))?.status !== "open", opts.personWaitMs ?? 600_000);
       await drained();
     }
     reasked = Math.max(0, asked - 1);
@@ -193,6 +198,7 @@ export async function runScenario(env: Env, opts: { repo: string; mode?: "unatte
     const afterDelete = await mainText(env, repo, TOWN);
     checks.deleteLanded = deleted.trailers.agent === "archivist" && !afterDelete.includes("## History") && afterDelete.length > 0;
     if (mode === "unattended") {
+      await pace();
       const e = await revertEnvelope(env.ARTIFACTS, repo, person, deleted.hash, TOWN);
       await write(person, { ...e, source: "undo by scenario@braid.invalid" });
       await drained();
@@ -203,6 +209,7 @@ export async function runScenario(env: Env, opts: { repo: string; mode?: "unatte
     // The whole record, not a heading: undo gives back exactly what the delete took.
     checks.undoRestored = !!undo && (await mainText(env, repo, TOWN)) === beforeDelete;
     if (mode === "unattended" && undo) {
+      await pace();
       const e = await revertEnvelope(env.ARTIFACTS, repo, person, undo.hash, TOWN);
       await write(person, { ...e, source: "undo by scenario@braid.invalid" });
       await drained();
