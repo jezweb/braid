@@ -47,6 +47,9 @@ async function proposeOnce(ai: Ai, model: string, c: Overlap): Promise<string | 
   if (/^#{1,6} |^---\s*$/m.test(rest)) return undefined;
   // More paragraphs than either writer produced is the model talking, not merging.
   if (paragraphs(text) > Math.max(paragraphs(c.ours), paragraphs(c.theirs))) return undefined;
+  // One side repeated word for word is not a merge: approving it would quietly drop the other writer's edit.
+  const body = (t: string) => t.replace(/^## [^\n]*\n/, "").trim();
+  if (body(text) === body(c.ours) || body(text) === body(c.theirs)) return undefined;
   const tail = /\n*$/.exec(c.ours)?.[0] ?? "\n";
   return text + (tail || "\n");
 }

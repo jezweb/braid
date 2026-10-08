@@ -170,6 +170,8 @@ export async function runScenario(env: Env, opts: { repo: string; mode?: "unatte
     checks.exactlyOneConflict = open.length === 1 && open[0].path === TOWN;
     checks.approvalHasProposal = !!open[0]?.proposal;
     const conflicted = open[0]?.laneCommit;
+    const summary = (t: string) => /## Summary\n([\s\S]*?)(?=\n## |$)/.exec(t)?.[1].trim();
+    const summaryBefore = summary(await mainText(env, repo, TOWN));
     let asked = 0;
     for (let round = 0; conflicted && round < 4; round++) {
       const q = (await ma.approvals("open")).find((a) => a.laneCommit === conflicted);
@@ -186,6 +188,8 @@ export async function runScenario(env: Env, opts: { repo: string; mode?: "unatte
     const afterApproval = await mainLog();
     // The editor's stacked write (the bridge date, in History) merged without asking anyone.
     checks.stackedMergedClean = (await mainText(env, repo, TOWN)).includes("1860");
+    // The approved answer changed the summary: a proposal that repeats main would drop the translator's edit.
+    checks.approvalChangedSummary = summary(await mainText(env, repo, TOWN)) !== summaryBefore;
     checks.approvalLanded = afterApproval.some((c) => c.trailers.approvedBy && c.trailers.laneCommit && (c.trailers.resolution === "llm" || c.trailers.resolution === "human"));
     mark("act 2 approved");
 
