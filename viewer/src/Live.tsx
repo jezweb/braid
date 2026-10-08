@@ -134,7 +134,8 @@ function layout(state: State, width: number) {
   while (windowS < elapsed + 10) windowS *= 2;
   const t1 = live ? t0 + windowS : last;
   const span = Math.max(t1 - t0, 1);
-  const scaleH = live ? 600 : Math.max(360, Math.min(900, merges.length * 22));
+  // Live, the river fits the window, so "now" stays on screen; finished, it sizes to the story.
+  const scaleH = live ? Math.max(300, Math.min(600, window.innerHeight - top - 150)) : Math.max(360, Math.min(900, merges.length * 22));
 
   // Real time, pushed apart only where commits land in the same instant.
   let lastY = -Infinity;
