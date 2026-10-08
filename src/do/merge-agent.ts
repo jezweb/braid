@@ -435,7 +435,8 @@ export class MergeAgent extends DurableObject<Env> {
       await this.ctx.storage.deleteAlarm();
       this.ctx.storage.sql.exec(`DELETE FROM lanes`);
       this.ctx.storage.sql.exec(`DELETE FROM approvals`);
-      await this.ctx.storage.delete([...(await this.ctx.storage.list()).keys()]);
+      // The act log outlives a rebuild: it is the record of who decided what, and how they signed in.
+      await this.ctx.storage.delete([...(await this.ctx.storage.list()).keys()].filter((k) => k !== "actlog"));
       this.tokens.clear();
       this.info = undefined;
       return agents;
