@@ -80,6 +80,8 @@ export type ScenarioResult = {
  * phase "all" (default) sets the stage and plays; "stage" only rebuilds, seeds and forks every lane (the slow
  * part, about 35 s), so filming can start on a ready stage; "play" runs the acts on a stage already set.
  */
+const SEED_MESSAGE = "Harbourne: first records";
+
 export async function runScenario(env: Env, opts: { repo: string; mode?: "unattended" | "interactive"; personWaitMs?: number; phase?: "all" | "stage" | "play"; paceMs?: number; plainExternal?: boolean }): Promise<ScenarioResult> {
   const phase = opts.phase ?? "all";
   // Unattended, the runner stands in for the person; paceMs makes it wait before each decision, so a
@@ -116,10 +118,16 @@ export async function runScenario(env: Env, opts: { repo: string; mode?: "unatte
   try {
     // ---- the stage: a fresh repo, every lane forked in advance (forks take seconds each)
     if (phase === "play") {
-      // The stage must be fresh: the seed commit and nothing else on main.
+      // The stage must be fresh: main is the seed commit alone, and every lane still sits on it (no
+      // leftover lane commits from an interrupted run).
       const log = await mainLog().catch(() => []);
-      if (log.length !== 1) throw new Error(`play needs a freshly staged repo (main has ${log.length} commits); run phase=stage first`);
-      for (const a of [...AGENTS, person, PLAIN]) await ma.provisionLane(repo, a);
+      if (log.length !== 1 || log[0].subject !== SEED_MESSAGE) throw new Error(`play needs a freshly staged repo (main has ${log.length} commits); run phase=stage first`);
+      for (const a of [...AGENTS, person, PLAIN]) {
+        await ma.provisionLane(repo, a);
+        using lane = await env.ARTIFACTS.get(`${repo}--${a}`);
+        const tip = (await lane.log({ ref: "main", limit: 1 }))[0]?.hash;
+        if (tip !== log[0].hash) throw new Error(`play needs a freshly staged repo (${a}'s lane has moved); run phase=stage first`);
+      }
       await ma.watch(repo, 600);
       mark("stage found");
     } else {
@@ -129,7 +137,7 @@ export async function runScenario(env: Env, opts: { repo: string; mode?: "unatte
       const edits = new Map<string, string>();
       for (const [p, text] of Object.entries(SEED)) edits.set(p, await seed.writeText(text));
       const tree = await seed.editTree(null, edits);
-      await seed.push({ url: created.remote, token: created.token }, await seed.commit({ tree, parents: [], message: "Harbourne: first records", author: { name: "seed", email: "seed@braid.invalid" } }));
+      await seed.push({ url: created.remote, token: created.token }, await seed.commit({ tree, parents: [], message: SEED_MESSAGE, author: { name: "seed", email: "seed@braid.invalid" } }));
       for (const a of [...AGENTS, person, PLAIN]) await ma.provisionLane(repo, a);
       await ma.watch(repo, 600);
       mark("stage set");
@@ -232,7 +240,11 @@ export async function runScenario(env: Env, opts: { repo: string; mode?: "unatte
       const gt = await g.editTree((await g.readCommit(tip)).tree, new Map([["places/mill-cafe.md", await g.writeText("# The Mill Café\n\nA made-up café beside the mill. Phone: 555 0177.\n")]]));
       await g.push({ url: info.remote, token: info.token }, await g.commit({ tree: gt, parents: [tip], message: "Add the Mill Café", author: { name: PLAIN, email: `${PLAIN}@braid.invalid` } }));
     }
-    await until(async () => (await mainLog())[0]?.trailers.agent === PLAIN, opts.plainExternal ? (opts.personWaitMs ?? 600_000) : 60_000);
+    // Waiting on an outside push: keep the merge agent sweeping for as long as we wait, and look through
+    // main's history, not just its tip (another merge may land on top between polls).
+    const plainWait = opts.plainExternal ? (opts.personWaitMs ?? 600_000) : 60_000;
+    if (opts.plainExternal) await ma.watch(repo, Math.ceil(plainWait / 1000));
+    await until(async () => (await mainLog()).some((c) => c.trailers.agent === PLAIN && c.trailers.source === "git push"), plainWait);
     await drained();
     checks.plainGitMerged = (await mainLog()).some((c) => c.trailers.agent === PLAIN && c.trailers.source === "git push") &&
       (opts.plainExternal || (await mainText(env, repo, "places/mill-cafe.md")).includes("Mill Café"));

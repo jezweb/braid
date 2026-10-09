@@ -12,6 +12,12 @@ const c = {
 const ai = (...replies: string[]) => ({ run: async () => ({ response: replies.shift() ?? "" }) }) as unknown as Ai;
 
 describe("merge proposals", () => {
+  it("keeps one side repeated when it already carries the other's edit", async () => {
+    const sup = { kind: "overlap" as const, section: "Hours", base: "## Hours\nThe mill opens at 8.\n\n",
+      ours: "## Hours\nThe mill opens at 9.\n\n", theirs: "## Hours\nThe mill opens at 9. Admission is free.\n\n" };
+    expect(await proposeSection(ai(sup.theirs.trim()), "m", sup)).toBe(sup.theirs.trim() + "\n\n");
+  });
+
   it("keeps a proposal that merges both edits", async () => {
     const merged = "## Summary\nHarbourne is a fictional river town. Roughly 4,000 residents live there.";
     expect(await proposeSection(ai(merged), "m", c)).toBe(merged + "\n\n");

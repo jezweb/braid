@@ -100,7 +100,11 @@ export function Marked({ from, to }: { from: string; to: string }) {
 
 /** The repo this Worker acts on, asked once per page load. */
 let actOn: Promise<string | null> | undefined;
-const actOnRepo = () => (actOn ??= api.state().then((s) => s.actOn).catch(() => null));
+const actOnRepo = () => {
+  // Cache only an answer: a failed or missing-repo lookup (say, mid-rebuild) is asked again next time.
+  actOn ??= api.state().then((s) => s.actOn || null).catch(() => null).then((r) => (r ? r : ((actOn = undefined), null)));
+  return actOn;
+};
 
 /**
  * True while watching a repo other than the one actions apply to (via ?repo=): such pages are look-only.

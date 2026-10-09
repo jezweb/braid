@@ -2,6 +2,7 @@
 // that keeps both edits' intent. A person approves, edits or picks a side; a
 // proposal never lands on its own.
 
+import { diffWords } from "diff";
 import { mergeRecord, pickSide, type Conflict } from "./merge";
 
 // Chosen 3 Oct 2026 on the merge prompt: kimi-k2.6 (thinking off) merged both edits faithfully in 1.3 s.
@@ -22,6 +23,14 @@ export async function proposeSection(ai: Ai, model: string, c: Overlap): Promise
 
 /** Paragraphs in a section, heading line excluded. */
 const paragraphs = (t: string) => t.replace(/^## [^\n]*\n/, "").trim().split(/\n{2,}/).filter(Boolean).length;
+
+const body = (t: string) => t.replace(/^## [^\n]*\n/, "").trim();
+
+/** Whether `text` already holds every word `side` added to `base` (so repeating it keeps that edit). */
+function carries(base: string, side: string, text: string): boolean {
+  const added = diffWords(body(base), body(side)).filter((p) => p.added).map((p) => p.value.trim()).filter(Boolean);
+  return added.length > 0 && added.every((w) => body(text).includes(w));
+}
 
 async function proposeOnce(ai: Ai, model: string, c: Overlap): Promise<string | undefined> {
   const user = `BASE:\n${c.base}\n\nA:\n${c.ours}\n\nB:\n${c.theirs}`;
@@ -47,9 +56,9 @@ async function proposeOnce(ai: Ai, model: string, c: Overlap): Promise<string | 
   if (/^#{1,6} |^---\s*$/m.test(rest)) return undefined;
   // More paragraphs than either writer produced is the model talking, not merging.
   if (paragraphs(text) > Math.max(paragraphs(c.ours), paragraphs(c.theirs))) return undefined;
-  // One side repeated word for word is not a merge: approving it would quietly drop the other writer's edit.
-  const body = (t: string) => t.replace(/^## [^\n]*\n/, "").trim();
-  if (body(text) === body(c.ours) || body(text) === body(c.theirs)) return undefined;
+  // One side repeated word for word drops the other writer's edit, unless that side already carries it.
+  if (body(text) === body(c.ours) && !carries(c.base, c.theirs, text)) return undefined;
+  if (body(text) === body(c.theirs) && !carries(c.base, c.ours, text)) return undefined;
   const tail = /\n*$/.exec(c.ours)?.[0] ?? "\n";
   return text + (tail || "\n");
 }
